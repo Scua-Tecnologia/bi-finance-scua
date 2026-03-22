@@ -1,16 +1,12 @@
 name: ETL — Conta Azul → Supabase
 
 # ─── Agendamento ───────────────────────────────────────────────────────────────
-# Horário: 08:00 BRT (UTC-3) = 11:00 UTC, segunda a sexta.
+# Horário: 05:00 BRT (UTC-3) = 08:00 UTC, todos os dias.
 # Brasil não adota horário de verão, então UTC-3 é fixo o ano todo.
-#
-# Para ajustar o horário, edite a expressão cron:
-#   '0 11 * * 1-5'  → seg-sex às 11:00 UTC (08:00 BRT)
-#   '0 10 * * *'    → todos os dias às 10:00 UTC (07:00 BRT)
 # ─────────────────────────────────────────────────────────────────────────────
 on:
   schedule:
-    - cron: '0 11 * * 1-5'
+    - cron: '0 8 * * *'
   workflow_dispatch: {}   # permite disparo manual pelo painel do GitHub
 
 permissions:
