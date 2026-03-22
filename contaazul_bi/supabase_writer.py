@@ -91,7 +91,7 @@ def write_analytics_to_supabase(tables: dict[str, pd.DataFrame], database_url: s
         database_url: Connection string PostgreSQL do Supabase
                       (ex: postgresql://postgres:[senha]@db.[ref].supabase.co:5432/postgres)
     """
-    engine = create_engine(database_url)
+    engine = create_engine(database_url, pool_pre_ping=True)
     written = 0
     skipped = 0
 

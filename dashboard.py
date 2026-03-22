@@ -80,7 +80,7 @@ def _save_cenarios(c: dict) -> None:
                 conn.execute(
                     text("""
                         INSERT INTO bi_cenarios (id, projecoes, renovacao_ativa, contratos_excluidos, atualizado_em)
-                        VALUES (1, :p::jsonb, :r, :e::jsonb, NOW())
+                        VALUES (1, CAST(:p AS jsonb), :r, CAST(:e AS jsonb), NOW())
                         ON CONFLICT (id) DO UPDATE SET
                             projecoes           = EXCLUDED.projecoes,
                             renovacao_ativa     = EXCLUDED.renovacao_ativa,
@@ -456,7 +456,7 @@ def _get_db_engine():
     database_url = os.environ.get("DATABASE_URL")
     if not database_url:
         return None
-    return create_engine(database_url)
+    return create_engine(database_url, pool_pre_ping=True)
 
 
 def _deserialize_json_columns(df: pd.DataFrame) -> pd.DataFrame:

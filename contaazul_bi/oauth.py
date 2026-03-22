@@ -61,7 +61,7 @@ class SupabaseTokenStore:
 
     def __init__(self, database_url: str):
         from sqlalchemy import create_engine as _create_engine
-        self._engine = _create_engine(database_url)
+        self._engine = _create_engine(database_url, pool_pre_ping=True)
 
     def load(self) -> OAuthTokenBundle | None:
         from sqlalchemy import text
