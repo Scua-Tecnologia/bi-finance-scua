@@ -392,13 +392,22 @@ def _run_auth() -> None:
         name         = "Thiago Carvalho"
         password_hash = "$2b$12$..."   # bcrypt hash
 
-    Se nenhuma credencial for encontrada em st.secrets, a autenticação é
-    desabilitada automaticamente — útil para desenvolvimento local.
+    Se as credenciais não puderem ser carregadas, o acesso é negado (fail closed).
     """
     import bcrypt as _bcrypt
 
+    import time as _time
+
+    _SESSION_TIMEOUT_SECONDS = 8 * 3600  # 8 horas
+
     if st.session_state.get("_authenticated"):
-        return
+        login_ts = st.session_state.get("_login_ts", 0.0)
+        if _time.time() - login_ts > _SESSION_TIMEOUT_SECONDS:
+            for key in ["_authenticated", "_username", "_display_name", "_login_ts"]:
+                st.session_state.pop(key, None)
+            st.info("Sua sessão expirou. Faça login novamente.")
+        else:
+            return
 
     # Tenta carregar credenciais do secrets.toml / variáveis de ambiente
     try:
@@ -408,9 +417,27 @@ def _run_auth() -> None:
         has_creds = False
 
     if not has_creds:
-        # Sem credenciais configuradas: desabilita auth (modo desenvolvimento)
-        st.session_state["_authenticated"] = True
-        return
+        # Credenciais ausentes ou ilegíveis: bloqueia acesso (fail closed)
+        st.error(
+            "Credenciais de acesso não configuradas. "
+            "Configure `[credentials]` em secrets.toml antes de usar o dashboard."
+        )
+        st.stop()
+
+    # ── Lockout por tentativas excessivas ─────────────────────────────────────
+    _MAX_ATTEMPTS = 5
+    _LOCKOUT_SECONDS = 300  # 5 minutos
+
+    attempts = st.session_state.get("_login_attempts", 0)
+    locked_until = st.session_state.get("_locked_until", 0.0)
+
+    import time as _time
+    now = _time.time()
+
+    if locked_until > now:
+        remaining = int(locked_until - now)
+        st.error(f"Muitas tentativas incorretas. Tente novamente em {remaining} segundos.")
+        st.stop()
 
     # ── Tela de login ─────────────────────────────────────────────────────────
     _, col, _ = st.columns([1, 1, 1])
@@ -442,9 +469,19 @@ def _run_auth() -> None:
                 st.session_state["_authenticated"] = True
                 st.session_state["_username"] = username
                 st.session_state["_display_name"] = str(user_data.get("name", username))
+                st.session_state["_login_ts"] = _time.time()
+                st.session_state["_login_attempts"] = 0
+                st.session_state["_locked_until"] = 0.0
                 st.rerun()
             else:
-                st.error("Usuário ou senha incorretos.")
+                attempts += 1
+                st.session_state["_login_attempts"] = attempts
+                remaining_attempts = _MAX_ATTEMPTS - attempts
+                if attempts >= _MAX_ATTEMPTS:
+                    st.session_state["_locked_until"] = now + _LOCKOUT_SECONDS
+                    st.error(f"Muitas tentativas incorretas. Tente novamente em {_LOCKOUT_SECONDS // 60} minutos.")
+                else:
+                    st.error(f"Usuário ou senha incorretos. Tentativas restantes: {remaining_attempts}.")
 
     st.stop()
 
@@ -491,7 +528,7 @@ def _load_from_database(engine) -> dict[str, pd.DataFrame]:
 
     for key, table_name in db_mapping.items():
         try:
-            df = pd.read_sql_table(table_name, engine, schema="public")
+            df = pd.read_sql_table(table_name, engine, schema="bi_analytics")
             frames[key] = _deserialize_json_columns(df)
         except Exception as exc:
             missing.append(table_name)

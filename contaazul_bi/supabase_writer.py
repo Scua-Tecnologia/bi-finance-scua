@@ -96,6 +96,11 @@ def write_analytics_to_supabase(tables: dict[str, pd.DataFrame], database_url: s
     skipped = 0
 
     try:
+        # Garante que o schema bi_analytics existe antes de escrever qualquer tabela.
+        from sqlalchemy import text as _text
+        with engine.begin() as _conn:
+            _conn.execute(_text("CREATE SCHEMA IF NOT EXISTS bi_analytics"))
+
         for table_name, df in tables.items():
             if table_name not in ANALYTICS_TABLES:
                 continue
@@ -110,7 +115,7 @@ def write_analytics_to_supabase(tables: dict[str, pd.DataFrame], database_url: s
             df_out.to_sql(
                 table_name,
                 engine,
-                schema="public",
+                schema="bi_analytics",
                 if_exists="replace",
                 index=False,
                 chunksize=500,

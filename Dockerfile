@@ -30,6 +30,11 @@ COPY . .
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# Usuário não-root para reduzir superfície de ataque
+RUN useradd --no-create-home --shell /bin/false appuser \
+    && chown -R appuser:appuser /app /entrypoint.sh
+USER appuser
+
 EXPOSE 8501
 
 # Verifica se o Streamlit está respondendo na porta correta
