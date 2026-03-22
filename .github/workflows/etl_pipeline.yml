@@ -21,11 +21,11 @@ jobs:
     steps:
       # ── 1. Código ────────────────────────────────────────────────────────────
       - name: Checkout código
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
       # ── 2. Python ────────────────────────────────────────────────────────────
       - name: Setup Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.12'
 
