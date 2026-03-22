@@ -1,0 +1,37 @@
+# Credenciais — NUNCA incluir na imagem
+.env
+.env.*
+.secrets/
+.streamlit/secrets.toml
+
+# Git
+.git
+.gitignore
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Saída gerada pelo pipeline (não faz parte do dashboard)
+output/
+
+# Arquivos temporários e ferramentas locais
+*.tmp
+*.xlsx~
+forecast_tmp.xlsx
+tools/
+
+# Documentação e migrations (não necessários em runtime)
+README.md
+migrations/
+
+# Editor
+.vscode/
+.claude/

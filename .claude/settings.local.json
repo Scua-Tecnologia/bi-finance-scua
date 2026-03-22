@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\Business Intelligence - 00 - Painel BI Gerencial\\\\02 - Projeto - BI \\(v2\\)\")",
+      "Bash(type \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\Business Intelligence - 00 - Painel BI Gerencial\\\\02 - Projeto - BI \\(v2\\)\\\\.env\")",
+      "Bash(findstr /v \"SECRET\\\\|PASSWORD\\\\|TOKEN\\\\|KEY\")",
+      "Bash(ls \"c:/Users/Thiago Carvalho/OneDrive - Scua/Business Intelligence - 00 - Painel BI Gerencial/02 - Projeto - BI \\(v2\\)/contaazul_bi/transformers\")",
+      "Bash(ls \"c:/Users/Thiago Carvalho/OneDrive - Scua/Business Intelligence - 00 - Painel BI Gerencial/02 - Projeto - BI \\(v2\\)/contaazul_bi/extractors\")",
+      "Bash(python -m contaazul_bi.main run)",
+      "Bash(python -c \"import json; s=json.load\\(open\\(''c:/Users/Thiago Carvalho/OneDrive - Scua/Business Intelligence - 00 - Painel BI Gerencial/02 - Projeto - BI \\(v2\\)/output/meta/run_summary.json''\\)\\); print\\(''duration:'', round\\(s[''duration_seconds''],1\\), ''s''\\); print\\(''zero_row_warnings:'', s[''zero_row_warnings'']\\); print\\(\\); print\\(''RAW:''\\); [print\\(f''  {k}: {v[\"\"rows\"\"]} linhas''\\) for k,v in s[''raw_outputs''].items\\(\\)]; print\\(\\); print\\(''ANALYTICS:''\\); [print\\(f''  {k}: {v[\"\"rows\"\"]} linhas''\\) for k,v in s[''analytics_outputs''].items\\(\\)]\")",
+      "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type f -o -type d)",
+      "Bash(find '/c/Users/Thiago Carvalho/OneDrive - Scua/02 - Projeto - BI \\(v2\\)' -type f)",
+      "Bash(python:*)",
+      "Bash(wc -l \"c:/Users/Thiago Carvalho/OneDrive - Scua/02 - Projeto - BI \\(v2\\)/dashboard.py\")",
+      "Bash(python -c \":*)",
+      "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type f -name \"*\")",
+      "Bash(ls -la \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\")",
+      "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type f \\\\\\( -name \"*.ps1\" -o -name \"*.sh\" -o -name \"*.json\" -o -name \"*.md\" \\\\\\) ! -path \"*/\\\\.*\" ! -path \"*/output/*\" ! -path \"*/__pycache__/*\")"
+    ]
+  }
+}

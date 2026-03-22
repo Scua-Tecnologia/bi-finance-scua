@@ -1,0 +1,28 @@
+# Credenciais e tokens OAuth — NUNCA commitar
+.env
+.env.*
+.secrets/
+
+# Streamlit secrets — NUNCA commitar (usar secrets.toml.example como referência)
+.streamlit/secrets.toml
+
+# Cache Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Saída gerada pelo pipeline
+output/
+
+# Arquivos temporários
+*.tmp
+*.xlsx~
+forecast_tmp.xlsx
+
+# Editor
+.vscode/

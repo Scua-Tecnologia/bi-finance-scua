@@ -1,0 +1,85 @@
+name: ETL — Conta Azul → Supabase
+
+# ─── Agendamento ───────────────────────────────────────────────────────────────
+# Horário: 08:00 BRT (UTC-3) = 11:00 UTC, segunda a sexta.
+# Brasil não adota horário de verão, então UTC-3 é fixo o ano todo.
+#
+# Para ajustar o horário, edite a expressão cron:
+#   '0 11 * * 1-5'  → seg-sex às 11:00 UTC (08:00 BRT)
+#   '0 10 * * *'    → todos os dias às 10:00 UTC (07:00 BRT)
+# ─────────────────────────────────────────────────────────────────────────────
+on:
+  schedule:
+    - cron: '0 11 * * 1-5'
+  workflow_dispatch: {}   # permite disparo manual pelo painel do GitHub
+
+permissions:
+  contents: read
+
+jobs:
+  etl:
+    name: Extração e carga no Supabase
+    runs-on: ubuntu-latest
+    timeout-minutes: 30   # pipeline típico: 3-5 min; 30 min é margem segura
+
+    steps:
+      # ── 1. Código ────────────────────────────────────────────────────────────
+      - name: Checkout código
+        uses: actions/checkout@v4
+
+      # ── 2. Python ────────────────────────────────────────────────────────────
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      # ── 3. Dependências ───────────────────────────────────────────────────────
+      - name: Instalar dependências
+        run: pip install --no-cache-dir -r requirements.txt
+
+      # ── 4. Pipeline ETL ───────────────────────────────────────────────────────
+      # Pré-requisito (único, one-time, feito localmente):
+      #   python -m contaazul_bi.main authorize
+      # Isso salva os tokens OAuth na tabela bi_oauth_tokens do Supabase.
+      # A partir daí, este workflow renova os tokens automaticamente via
+      # refresh_token a cada execução.
+      - name: Executar pipeline ETL
+        env:
+          # ── Conta Azul — OAuth (GitHub Secrets) ────────────────────────────
+          CONTA_AZUL_CLIENT_ID:      ${{ secrets.CONTA_AZUL_CLIENT_ID }}
+          CONTA_AZUL_CLIENT_SECRET:  ${{ secrets.CONTA_AZUL_CLIENT_SECRET }}
+          CONTA_AZUL_REDIRECT_URI:   ${{ secrets.CONTA_AZUL_REDIRECT_URI }}
+
+          # ── Supabase (GitHub Secrets) ───────────────────────────────────────
+          # Tokens OAuth, tabelas de analytics e cenários são lidos/gravados aqui.
+          DATABASE_URL:              ${{ secrets.DATABASE_URL }}
+
+          # ── Módulos habilitados ─────────────────────────────────────────────
+          CONTA_AZUL_ENABLE_SALES:                   'true'
+          CONTA_AZUL_ENABLE_CONTRACTS:               'true'
+          CONTA_AZUL_ENABLE_PEOPLE:                  'false'
+          CONTA_AZUL_ENABLE_INVOICES:                'false'
+          CONTA_AZUL_ENABLE_INSTALLMENT_ENRICHMENT:  'true'
+          CONTA_AZUL_ENABLE_ACQUITTANCES:            'true'
+
+          # ── Janela temporal ─────────────────────────────────────────────────
+          CONTA_AZUL_LOOKBACK_YEARS:               '1'
+          CONTA_AZUL_LOOKAHEAD_YEARS:              '1'
+          CONTA_AZUL_INSTALLMENT_LOOKBACK_MONTHS:  '12'
+
+          # ── HTTP ────────────────────────────────────────────────────────────
+          CONTA_AZUL_TIMEOUT_SECONDS:  '120'
+          CONTA_AZUL_PAGE_SIZE:        '100'
+          CONTA_AZUL_LOG_LEVEL:        'INFO'
+        run: python -m contaazul_bi.main run
+
+      # ── 5. Diagnóstico em caso de falha ───────────────────────────────────────
+      - name: Reportar falha
+        if: failure()
+        run: |
+          echo "::error::Pipeline ETL falhou."
+          echo "Verifique os logs acima. Causas comuns:"
+          echo "  - Refresh token expirado → reexecute 'python -m contaazul_bi.main authorize' localmente"
+          echo "  - DATABASE_URL incorreta ou Supabase indisponível"
+          echo "  - Timeout na API do Conta Azul (tente aumentar CONTA_AZUL_TIMEOUT_SECONDS)"
