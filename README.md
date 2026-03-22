@@ -1,541 +1,471 @@
-# BI Gerencial — Pipeline ETL Conta Azul (v2)
+# BI Finance — Scua
 
-Este projeto extrai dados financeiros e comerciais do ERP **Conta Azul**, transforma-os em um modelo dimensional (star schema) e grava arquivos **Parquet** prontos para consumo no **Power BI** ou em qualquer ferramenta de BI compatível.
+Dashboard financeiro da Scua, alimentado pela API do Conta Azul e acessível via navegador com autenticação. Substitui o Power BI com uma solução 100% em nuvem, sem dependência de arquivos locais ou desktop.
 
 ---
 
 ## Sumário
 
-1. [O que este projeto faz](#1-o-que-este-projeto-faz)
-2. [Como os dados fluem — visão geral](#2-como-os-dados-fluem--visão-geral)
-3. [Pré-requisitos](#3-pré-requisitos)
-4. [Instalação](#4-instalação)
-5. [Configuração — variáveis de ambiente](#5-configuração--variáveis-de-ambiente)
-6. [Primeiro uso — autorização OAuth](#6-primeiro-uso--autorização-oauth)
-7. [Executando o pipeline](#7-executando-o-pipeline)
-8. [O que é gerado — arquivos de saída](#8-o-que-é-gerado--arquivos-de-saída)
-9. [Modelo de dados — star schema](#9-modelo-de-dados--star-schema)
-10. [Estrutura do código](#10-estrutura-do-código)
-11. [Como conectar ao Power BI](#11-como-conectar-ao-power-bi)
-12. [Diagnóstico e solução de problemas](#12-diagnóstico-e-solução-de-problemas)
-13. [Referência de todas as variáveis de ambiente](#13-referência-de-todas-as-variáveis-de-ambiente)
+1. [Visão geral](#1-visão-geral)
+2. [Arquitetura](#2-arquitetura)
+3. [Estrutura do repositório](#3-estrutura-do-repositório)
+4. [Configuração do ambiente local](#4-configuração-do-ambiente-local)
+5. [Variáveis de ambiente](#5-variáveis-de-ambiente)
+6. [Deploy em produção (Railway)](#6-deploy-em-produção-railway)
+7. [ETL e agendamento (GitHub Actions)](#7-etl-e-agendamento-github-actions)
+8. [Autenticação — usuários e senhas](#8-autenticação--usuários-e-senhas)
+9. [Banco de dados (Supabase)](#9-banco-de-dados-supabase)
+10. [Manutenção e troubleshooting](#10-manutenção-e-troubleshooting)
+11. [Responsável e transferência de ownership](#11-responsável-e-transferência-de-ownership)
 
 ---
 
-## 1. O que este projeto faz
+## 1. Visão geral
 
-O Conta Azul armazena as informações em sua própria nuvem, acessível via API REST. O Power BI não consegue se conectar diretamente a essa API — ele precisa de arquivos ou banco de dados estruturados.
+O **BI Finance** é um dashboard interativo que exibe os dados financeiros e comerciais da Scua em tempo real. Os dados são extraídos automaticamente do ERP **Conta Azul** todos os dias úteis e armazenados no **Supabase** (PostgreSQL). O dashboard é publicado no **Railway** e pode ser acessado por qualquer pessoa autorizada via navegador, sem instalar nada.
 
-Este projeto resolve esse problema em três etapas automáticas:
+**O que o dashboard exibe:**
 
-```
-API Conta Azul  ──►  Extração (Python)  ──►  Arquivos Parquet  ──►  Power BI
-```
-
-| Etapa | O que acontece |
-|---|---|
-| **Extração** | Faz chamadas paginadas à API do Conta Azul e salva os dados brutos em Parquet |
-| **Transformação** | Aplica regras de negócio, normaliza campos, cria métricas calculadas |
-| **Carga** | Grava as tabelas do modelo analítico (star schema) em Parquet |
-
-O pipeline é executado manualmente (ou agendado) sempre que se quer atualizar o Power BI com os dados mais recentes.
+- Resumo de caixa (entradas, saídas, saldo, runway)
+- Fluxo de caixa realizado e compromissado
+- Receita recorrente (MRR/ARR)
+- Cenários de projeção de caixa
+- Análise de contratos e churn
 
 ---
 
-## 2. Como os dados fluem — visão geral
+## 2. Arquitetura
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     Conta Azul API v2                        │
-│  /categorias  /contas-a-receber  /contas-a-pagar             │
-│  /transferencias  /contratos  /vendas  /pessoas  /baixas     │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ HTTP/JSON (paginado, com retry)
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│                  Extratores (extractors/)                     │
-│  FinanceExtractor  SalesExtractor  ContractsExtractor        │
-│  PeopleExtractor   InvoiceExtractor                          │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ DataFrames pandas
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│               output/raw/*.parquet  (dados brutos)           │
-│  categorias  contas_receber  contas_pagar  transferencias    │
-│  vendas  contratos  parcelas  baixas  ...                    │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ DataFrames pandas
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│          Transformador (transformers/analytics.py)           │
-│  • Normaliza datas e valores monetários                      │
-│  • Calcula sinalizadores (está_vencido, recorrente, etc.)    │
-│  • Enriquece baixas com dados de origem da parcela           │
-│  • Cria dimensão calendário                                  │
-│  • Monta star schema completo                                │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ DataFrames pandas
-                       ▼
-┌─────────────────────────────────────────────────────────────┐
-│           output/analytics/*.parquet  (modelo BI)            │
-│  dim_categoria  dim_calendario  fato_contas_a_receber        │
-│  fato_baixas  fato_fluxo_caixa_realizado  ...                │
-└─────────────────────────────────────────────────────────────┘
-                       │
-                       ▼
-                  Power BI Desktop
-```
+### Infraestrutura
 
----
-
-## 3. Pré-requisitos
-
-| Requisito | Versão mínima | Como verificar |
+| Componente | Tecnologia | Função |
 |---|---|---|
-| Python | 3.10 | `python --version` |
-| pip | qualquer | `pip --version` |
-| Acesso ao Conta Azul | — | Conta com perfil de integração |
-| App OAuth cadastrado no Conta Azul | — | Veja seção 6 |
+| Código-fonte | GitHub (privado) | Versionamento e CI/CD |
+| Banco de dados | Supabase (PostgreSQL) | Armazenamento de todas as tabelas |
+| Dashboard | Railway (Docker + Streamlit) | Interface web acessível via URL pública |
+| ETL | GitHub Actions (agendado) | Extração e carga automática dos dados |
 
-> **Dica:** Recomenda-se usar Python 3.12 para garantir compatibilidade com as versões de pacotes testadas.
+### Fluxo de dados
+
+```
+┌─────────────────────────────────────┐
+│           API Conta Azul            │
+│  /categorias  /contas-a-receber     │
+│  /contratos   /vendas   /baixas     │
+└──────────────┬──────────────────────┘
+               │ OAuth 2.0 + HTTP/JSON
+               ▼
+┌─────────────────────────────────────┐
+│     GitHub Actions (ETL diário)     │
+│  Extração → Transformação → Carga   │
+└──────────────┬──────────────────────┘
+               │ SQLAlchemy / PostgreSQL
+               ▼
+┌─────────────────────────────────────┐
+│            Supabase                 │
+│  schema bi_analytics  → fato_*/dim_ │
+│  schema public        → bi_cenarios │
+│                         bi_oauth_tokens │
+└──────────────┬──────────────────────┘
+               │ SQLAlchemy (DATABASE_URL)
+               ▼
+┌─────────────────────────────────────┐
+│    Dashboard Streamlit (Railway)    │
+│  Login com bcrypt → Visualizações   │
+└─────────────────────────────────────┘
+```
+
+### Segurança
+
+- Login com usuário e senha (hash bcrypt) — sem acesso sem autenticação
+- Bloqueio automático após 5 tentativas incorretas (5 minutos)
+- Sessão expira após 8 horas
+- Tokens OAuth armazenados no Supabase — nenhum arquivo de credencial no servidor
+- Tabelas de analytics isoladas no schema `bi_analytics` (não exposto via API REST do Supabase)
 
 ---
 
-## 4. Instalação
+## 3. Estrutura do repositório
 
-### 4.1 Clone ou copie o projeto
-
-Se você recebeu o projeto como arquivo ZIP, extraia-o para uma pasta de sua preferência.
-Se estiver usando git:
-
-```bash
-git clone <url-do-repositorio>
-cd "02 - Projeto - BI (v2)"
+```
+.
+├── dashboard.py                  ← Aplicação Streamlit (interface do dashboard)
+├── requirements.txt              ← Dependências Python
+├── Dockerfile                    ← Imagem Docker para deploy no Railway
+├── entrypoint.sh                 ← Script de inicialização do container
+├── .env.example                  ← Template de variáveis de ambiente (sem valores reais)
+│
+├── contaazul_bi/                 ← Pacote Python do ETL
+│   ├── config.py                 ← Configurações lidas das variáveis de ambiente
+│   ├── oauth.py                  ← Gerenciamento de tokens OAuth (login e refresh)
+│   ├── client.py                 ← Cliente HTTP com paginação e retry automático
+│   ├── main.py                   ← Orquestrador do pipeline + CLI
+│   ├── supabase_writer.py        ← Escrita das tabelas analytics no Supabase
+│   ├── extractors/
+│   │   ├── finance.py            ← Categorias, contas, transferências, baixas
+│   │   ├── sales.py              ← Vendas
+│   │   ├── contracts.py          ← Contratos
+│   │   └── people.py             ← Pessoas (clientes/fornecedores)
+│   └── transformers/
+│       └── analytics.py          ← Transformações e montagem do star schema
+│
+├── migrations/
+│   └── 001_init_supabase.sql     ← Script SQL para criação inicial das tabelas de controle
+│
+├── .streamlit/
+│   ├── config.toml               ← Configurações do Streamlit (CORS, XSRF, etc.)
+│   └── secrets.toml.example      ← Template de credenciais do dashboard
+│
+└── .github/
+    └── workflows/
+        └── etl_pipeline.yml      ← Workflow do GitHub Actions (ETL agendado)
 ```
 
-### 4.2 Crie um ambiente virtual (recomendado)
+---
 
-Um ambiente virtual isola as dependências deste projeto das demais instalações Python do seu computador.
+## 4. Configuração do ambiente local
+
+Para rodar o dashboard ou o ETL localmente (desenvolvimento/debug):
+
+### 4.1 Pré-requisitos
+
+- Python 3.12
+- Acesso ao Supabase (DATABASE_URL)
+- Credenciais OAuth do Conta Azul
+
+### 4.2 Instalação
 
 ```bash
-# Criar o ambiente virtual
+# Clone o repositório
+git clone https://github.com/thiagocangussuc/bi-finance-scua.git
+cd bi-finance-scua
+
+# Crie e ative o ambiente virtual
 python -m venv .venv
 
-# Ativar no Windows (PowerShell)
+# Windows (PowerShell)
 .\.venv\Scripts\Activate.ps1
 
-# Ativar no Windows (cmd)
-.\.venv\Scripts\activate.bat
-
-# Ativar no Linux/macOS
+# Linux/macOS
 source .venv/bin/activate
-```
 
-> Após ativar, você verá `(.venv)` no início do prompt de comando.
-
-### 4.3 Instale as dependências
-
-```bash
+# Instale as dependências
 pip install -r requirements.txt
 ```
 
-Isso instala os 4 pacotes necessários:
-
-| Pacote | Para que serve |
-|---|---|
-| `pandas` | Manipulação de tabelas em memória |
-| `requests` | Chamadas HTTP à API do Conta Azul |
-| `python-dotenv` | Leitura do arquivo `.env` |
-| `pyarrow` | Leitura e escrita de arquivos Parquet |
-
----
-
-## 5. Configuração — variáveis de ambiente
-
-Todas as configurações do pipeline ficam no arquivo `.env`, na raiz do projeto. Este arquivo **nunca deve ser enviado ao Git** (já está protegido pelo `.gitignore`).
-
-Se o arquivo `.env` não existir, crie-o copiando o template abaixo:
-
-```dotenv
-# ─── Credenciais OAuth do app cadastrado no Conta Azul ────────────────────────
-CONTA_AZUL_CLIENT_ID=seu_client_id_aqui
-CONTA_AZUL_CLIENT_SECRET=seu_client_secret_aqui
-CONTA_AZUL_REDIRECT_URI=https://scua.com.br/
-
-# ─── URLs da API (não alterar salvo mudança de versão da API) ─────────────────
-CONTA_AZUL_AUTH_BASE_URL=https://auth.contaazul.com
-CONTA_AZUL_API_BASE_URL=https://api-v2.contaazul.com
-CONTA_AZUL_SCOPE=openid profile aws.cognito.signin.user.admin
-
-# ─── Onde guardar tokens e arquivos de saída ──────────────────────────────────
-CONTA_AZUL_TOKEN_STORE_PATH=.secrets/conta_azul_tokens.json
-CONTA_AZUL_OUTPUT_DIR=output
-
-# ─── Comportamento do pipeline ────────────────────────────────────────────────
-CONTA_AZUL_LOG_LEVEL=INFO
-CONTA_AZUL_TIMEOUT_SECONDS=60
-CONTA_AZUL_PAGE_SIZE=100
-
-# ─── Janela de datas (quanto de histórico/futuro buscar) ─────────────────────
-CONTA_AZUL_LOOKBACK_YEARS=1
-CONTA_AZUL_LOOKAHEAD_YEARS=1
-CONTA_AZUL_INSTALLMENT_LOOKBACK_MONTHS=12
-
-# ─── Módulos opcionais (true/false) ───────────────────────────────────────────
-CONTA_AZUL_ENABLE_SALES=true
-CONTA_AZUL_ENABLE_CONTRACTS=true
-CONTA_AZUL_ENABLE_PEOPLE=false
-CONTA_AZUL_ENABLE_INVOICES=false
-CONTA_AZUL_ENABLE_INSTALLMENT_ENRICHMENT=true
-CONTA_AZUL_ENABLE_ACQUITTANCES=true
-```
-
-> **Onde encontrar `CLIENT_ID` e `CLIENT_SECRET`?**
-> No painel do Conta Azul, acesse **Configurações → Integrações → Aplicativos OAuth**.
-> Crie um novo app (ou use o existente) e copie as credenciais geradas.
-> A `REDIRECT_URI` cadastrada no app **precisa ser idêntica** ao valor no `.env`.
-
----
-
-## 6. Primeiro uso — autorização OAuth
-
-O Conta Azul usa o padrão **OAuth 2.0 Authorization Code**. Isso significa que, na primeira vez, é necessário autorizar o app manualmente pelo navegador. Após isso, o pipeline se autentica sozinho indefinidamente usando o *refresh token*.
-
-### Passo a passo
-
-**1.** Com o ambiente virtual ativado, execute:
+### 4.3 Configure as variáveis de ambiente
 
 ```bash
-python -m contaazul_bi.main authorize
+# Copie o template
+cp .env.example .env
+
+# Edite o .env com os valores reais (nunca commite este arquivo)
 ```
 
-**2.** O terminal exibirá uma URL e abrirá o navegador automaticamente. Faça login no Conta Azul e clique em **Autorizar**.
+### 4.4 Configure as credenciais do dashboard
 
-**3.** Após autorizar, o Conta Azul redireciona para a URL cadastrada (ex: `https://scua.com.br/?code=abc123&state=xyz`). Essa página pode dar erro — isso é normal. Copie a URL completa da barra do navegador.
+```bash
+# Copie o template de secrets
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 
-**4.** Cole a URL no terminal quando solicitado e pressione Enter.
+# Edite com o usuário e hash de senha desejados
+```
 
-**5.** Os tokens são salvos em `.secrets/conta_azul_tokens.json`. A partir deste momento, o pipeline renova os tokens automaticamente a cada execução — **você não precisa repetir este passo**.
+### 4.5 Rode o dashboard localmente
 
-> **Quando repetir este passo?**
-> Somente se o arquivo `.secrets/conta_azul_tokens.json` for excluído, se o app for revogado no Conta Azul, ou se o *refresh token* expirar por inatividade prolongada (geralmente 30 dias sem executar o pipeline).
+```bash
+streamlit run dashboard.py
+```
 
----
+O dashboard abrirá em `http://localhost:8501`. Se `DATABASE_URL` estiver configurada no `.env`, os dados virão do Supabase. Caso contrário, o dashboard tentará carregar arquivos Parquet da pasta `output/analytics/` (fallback local).
 
-## 7. Executando o pipeline
-
-Com o ambiente virtual ativado, na raiz do projeto:
+### 4.6 Rode o ETL localmente
 
 ```bash
 python -m contaazul_bi.main run
 ```
 
-O pipeline executa as seguintes fases em sequência:
+---
 
+## 5. Variáveis de ambiente
+
+### ETL e dashboard (arquivo `.env` local / secrets do Railway)
+
+| Variável | Obrigatória | Descrição | Onde obter |
+|---|---|---|---|
+| `DATABASE_URL` | Sim | Connection string PostgreSQL do Supabase (Transaction Pooler, porta 6543) | Supabase → Project Settings → Database → Transaction pooler |
+| `CONTA_AZUL_CLIENT_ID` | Sim | ID do app OAuth cadastrado no Conta Azul | Conta Azul → Configurações → Integrações |
+| `CONTA_AZUL_CLIENT_SECRET` | Sim | Secret do app OAuth | Conta Azul → Configurações → Integrações |
+| `CONTA_AZUL_REDIRECT_URI` | Sim | URI de redirecionamento cadastrada no app OAuth | Deve ser idêntica ao valor cadastrado no app |
+| `CONTA_AZUL_ENABLE_SALES` | Não | Ativa extração de vendas (`true`/`false`) | — |
+| `CONTA_AZUL_ENABLE_CONTRACTS` | Não | Ativa extração de contratos (`true`/`false`) | — |
+| `CONTA_AZUL_ENABLE_ACQUITTANCES` | Não | Ativa extração de baixas (`true`/`false`) | — |
+| `CONTA_AZUL_ENABLE_INSTALLMENT_ENRICHMENT` | Não | Necessário para extração de baixas | — |
+| `CONTA_AZUL_LOOKBACK_YEARS` | Não | Anos de histórico a buscar (padrão: `1`) | — |
+| `CONTA_AZUL_LOOKAHEAD_YEARS` | Não | Anos futuros a buscar (padrão: `1`) | — |
+| `CONTA_AZUL_INSTALLMENT_LOOKBACK_MONTHS` | Não | Meses retroativos para baixas (padrão: `12`) | — |
+| `CONTA_AZUL_TIMEOUT_SECONDS` | Não | Timeout HTTP em segundos (padrão: `120`) | — |
+| `CONTA_AZUL_PAGE_SIZE` | Não | Registros por página na API (padrão: `100`) | — |
+| `CONTA_AZUL_LOG_LEVEL` | Não | Nível de log: `DEBUG`, `INFO`, `WARNING` | — |
+
+### Credenciais do dashboard (`.streamlit/secrets.toml` local / `STREAMLIT_SECRETS` no Railway)
+
+```toml
+[credentials.nome_do_usuario]
+name          = "Nome Completo"
+password_hash = "$2b$12$..."   # hash bcrypt da senha
 ```
-1. Extração de tabelas de referência  (categorias, DRE, centros de custo, contas financeiras)
-2. Extração financeira                (contas a receber, contas a pagar, transferências, saldos)
-3. Extração comercial                 (vendas, contratos, pessoas)
-4. Extração de baixas                 (detalhamento de cada parcela quitada — mais lento)
-5. Transformação analítica            (star schema, métricas, calendário)
-6. Gravação dos arquivos Parquet      (raw/ e analytics/)
-7. Geração do run_summary.json        (resumo com contagem de linhas por tabela)
-```
 
-### Tempo esperado
+---
 
-A etapa mais demorada é a extração de baixas (item 4), que faz uma chamada HTTP por parcela quitada. Com ~550 parcelas, isso leva aproximadamente **2 minutos**. O tempo total típico é de **2 a 3 minutos**.
+## 6. Deploy em produção (Railway)
 
-### Saída do terminal
+O dashboard roda como um container Docker no Railway. O Railway monitora o repositório GitHub e faz redeploy automaticamente a cada push na branch `main`.
 
-Durante a execução, cada linha de log segue o formato:
+### Variáveis de ambiente no Railway
 
-```
-2026-03-21 18:15:08 | INFO | contaazul_bi.client | Endpoint /v1/categorias página 1/2: 100 registros.
-```
+Configure as seguintes variáveis no painel do Railway (Settings → Variables):
 
-| Campo | Significado |
+| Variável | Valor |
 |---|---|
-| Data/hora | Momento do evento |
-| Nível | `INFO` = normal, `WARNING` = algo a investigar, `ERROR` = falha |
-| Módulo | Qual parte do código gerou a mensagem |
-| Mensagem | O que aconteceu |
+| `DATABASE_URL` | Connection string do Supabase (Transaction Pooler, porta 6543) |
+| `CONTA_AZUL_CLIENT_ID` | ID do app OAuth |
+| `CONTA_AZUL_CLIENT_SECRET` | Secret do app OAuth |
+| `CONTA_AZUL_REDIRECT_URI` | URI cadastrada no app |
+| `STREAMLIT_SECRETS` | Conteúdo do `secrets.toml` codificado em base64 |
 
-Um `WARNING` não interrompe o pipeline — é apenas um aviso. Por exemplo:
+### Como gerar o valor de `STREAMLIT_SECRETS`
 
+```bash
+# No terminal, na raiz do projeto (com o secrets.toml preenchido):
+base64 -w0 .streamlit/secrets.toml
 ```
-WARNING | Tabela 'dim_pessoa' retornou 0 linhas. Verifique a extração.
-```
+
+Cole o resultado (string longa sem quebras de linha) na variável `STREAMLIT_SECRETS` no Railway.
+
+### Primeiro deploy
+
+1. Conecte o repositório GitHub no painel do Railway
+2. Configure todas as variáveis de ambiente acima
+3. O Railway fará o build da imagem Docker e publicará o dashboard automaticamente
 
 ---
 
-## 8. O que é gerado — arquivos de saída
+## 7. ETL e agendamento (GitHub Actions)
 
-Após a execução, a pasta `output/` terá esta estrutura:
+O pipeline ETL roda automaticamente via GitHub Actions, conforme definido em [`.github/workflows/etl_pipeline.yml`](.github/workflows/etl_pipeline.yml).
+
+### Agendamento
+
+O ETL executa **todos os dias às 05:00 BRT** (08:00 UTC), de segunda a domingo.
+
+### Secrets necessários no GitHub
+
+Configure em: **GitHub → Settings → Secrets and variables → Actions**
+
+| Secret | Descrição |
+|---|---|
+| `DATABASE_URL` | Connection string do Supabase (Transaction Pooler, porta 6543) |
+| `CONTA_AZUL_CLIENT_ID` | ID do app OAuth |
+| `CONTA_AZUL_CLIENT_SECRET` | Secret do app OAuth |
+| `CONTA_AZUL_REDIRECT_URI` | URI cadastrada no app |
+
+### Como acionar manualmente
+
+1. Acesse o repositório no GitHub
+2. Clique na aba **Actions**
+3. Selecione o workflow **ETL — Conta Azul → Supabase**
+4. Clique em **Run workflow**
+
+### O que o ETL faz
 
 ```
-output/
-├── raw/                          ← dados brutos vindos da API
-│   ├── categorias.parquet
-│   ├── categorias_dre.parquet
-│   ├── centros_custo.parquet
-│   ├── contas_financeiras.parquet
-│   ├── saldos_contas_financeiras.parquet
-│   ├── contas_receber.parquet
-│   ├── contas_pagar.parquet
-│   ├── transferencias.parquet
-│   ├── vendas.parquet
-│   ├── contratos.parquet
-│   ├── parcelas.parquet
-│   └── baixas.parquet
-│
-├── analytics/                    ← modelo dimensional pronto para o Power BI
-│   ├── dim_categoria.parquet
-│   ├── dim_categoria_dre.parquet
-│   ├── dim_centro_custo.parquet
-│   ├── dim_conta_financeira.parquet
-│   ├── dim_pessoa.parquet
-│   ├── dim_calendario.parquet
-│   ├── fato_saldos_contas.parquet
-│   ├── fato_contas_a_receber.parquet
-│   ├── fato_contas_a_pagar.parquet
-│   ├── fato_transferencias.parquet
-│   ├── fato_vendas.parquet
-│   ├── fato_contratos.parquet
-│   ├── fato_baixas.parquet
-│   ├── fato_fluxo_caixa_realizado.parquet
-│   ├── fato_fluxo_caixa_compromissado.parquet
-│   └── fato_financeiro_consolidado.parquet
-│
-└── meta/
-    └── run_summary.json          ← resumo da última execução
+1. Autentica na API do Conta Azul (renova o token OAuth automaticamente)
+2. Extrai tabelas de referência: categorias, centros de custo, contas financeiras
+3. Extrai dados financeiros: contas a receber, contas a pagar, transferências, saldos
+4. Extrai dados comerciais: vendas, contratos, baixas
+5. Transforma os dados em star schema (dimensões + fatos)
+6. Grava todas as tabelas no schema bi_analytics do Supabase
 ```
 
-### O arquivo run_summary.json
+### O que fazer se o ETL falhar
 
-Após cada execução bem-sucedida, este arquivo é atualizado com:
-
-- Data e hora de início e fim
-- Duração em segundos
-- Número de linhas de cada tabela gerada
-- Lista de tabelas que retornaram 0 linhas (`zero_row_warnings`) — útil para detectar problemas de extração
-
-Exemplo:
-```json
-{
-  "started_at": "2026-03-21T18:15:08",
-  "finished_at": "2026-03-21T18:17:13",
-  "duration_seconds": 124.8,
-  "zero_row_warnings": ["dim_pessoa"],
-  "raw_outputs": { "categorias": { "rows": 127, "parquet": "..." } },
-  "analytics_outputs": { "fato_baixas": { "rows": 552, "parquet": "..." } }
-}
-```
+| Erro | Causa provável | Solução |
+|---|---|---|
+| `Token store vazio` ou `400 Bad Request` ao renovar token | Refresh token expirado | Reautorizar (ver seção 10) |
+| `could not translate host name` | `DATABASE_URL` incorreta no GitHub Secret | Corrija o secret com a URL real do Supabase |
+| `timeout` | API do Conta Azul lenta | Aumente `CONTA_AZUL_TIMEOUT_SECONDS` no workflow |
+| Qualquer outro erro | Ver logs detalhados | Actions → execução com falha → step "Executar pipeline ETL" |
 
 ---
 
-## 9. Modelo de dados — star schema
+## 8. Autenticação — usuários e senhas
 
-O modelo analítico segue o padrão **star schema**: tabelas de dimensão (prefixo `dim_`) descrevem "quem/o quê/quando" e tabelas de fato (prefixo `fato_`) descrevem eventos com valores numéricos.
+O dashboard usa autenticação com bcrypt. As credenciais ficam no `secrets.toml` (local) ou na variável `STREAMLIT_SECRETS` (produção).
 
-### Dimensões
+### Adicionar um novo usuário
+
+**1.** Gere o hash bcrypt da senha:
+
+```bash
+python -c "import bcrypt; print(bcrypt.hashpw(b'senha_do_usuario', bcrypt.gensalt()).decode())"
+```
+
+**2.** Adicione ao `secrets.toml`:
+
+```toml
+[credentials.nome_login]
+name          = "Nome Completo"
+password_hash = "$2b$12$..."   # cole o hash gerado acima
+```
+
+**3.** Regenere o `STREAMLIT_SECRETS` em base64 e atualize no Railway.
+
+### Remover um usuário
+
+Basta apagar o bloco `[credentials.nome_login]` correspondente do `secrets.toml` e atualizar o `STREAMLIT_SECRETS` no Railway.
+
+### Regras de segurança
+
+- Após **5 tentativas de senha incorretas**, o login fica bloqueado por **5 minutos**
+- A sessão expira automaticamente após **8 horas**
+- Senhas nunca ficam armazenadas em texto puro — apenas o hash bcrypt
+
+---
+
+## 9. Banco de dados (Supabase)
+
+### Schemas
+
+| Schema | Acesso externo | Conteúdo |
+|---|---|---|
+| `bi_analytics` | Não (isolado) | Tabelas de dados extraídos do Conta Azul |
+| `public` | Via API REST (com RLS) | Tabelas de controle da aplicação |
+
+### Tabelas de controle (schema `public`)
 
 | Tabela | Descrição |
 |---|---|
-| `dim_categoria` | Categorias financeiras do plano de contas, enriquecidas com grupos e subgrupos do DRE |
-| `dim_categoria_dre` | Estrutura hierárquica do DRE (Demonstrativo de Resultado do Exercício) |
+| `bi_cenarios` | Linha única (id=1) com os cenários de projeção de caixa em formato JSONB. Editada pelo dashboard. |
+| `bi_oauth_tokens` | Linha única (id=1) com os tokens OAuth do Conta Azul. Atualizada automaticamente pelo ETL. |
+
+Ambas têm **Row Level Security (RLS)** habilitado — apenas o `service_role` tem acesso (o `anon` não consegue ler nem escrever).
+
+### Tabelas de analytics (schema `bi_analytics`)
+
+Criadas e substituídas automaticamente a cada execução do ETL.
+
+**Dimensões:**
+
+| Tabela | Descrição |
+|---|---|
+| `dim_categoria` | Categorias financeiras com classificação DRE |
+| `dim_categoria_dre` | Estrutura hierárquica do DRE |
 | `dim_centro_custo` | Centros de custo cadastrados |
-| `dim_conta_financeira` | Contas bancárias e caixas cadastrados |
+| `dim_conta_financeira` | Contas bancárias e caixas |
 | `dim_pessoa` | Clientes e fornecedores |
-| `dim_calendario` | Calendário diário com ano, mês, trimestre, semana — gerado automaticamente cobrindo todo o intervalo de datas presente nos dados |
+| `dim_calendario` | Calendário diário com ano, mês, trimestre |
 
-### Fatos
+**Fatos:**
 
-| Tabela | Granularidade | Descrição |
-|---|---|---|
-| `fato_contas_a_receber` | 1 linha por parcela a receber | Receitas previstas/realizadas, com status e flags de vencimento |
-| `fato_contas_a_pagar` | 1 linha por parcela a pagar | Despesas previstas/realizadas, com status e flags de vencimento |
-| `fato_transferencias` | 1 linha por transferência | Movimentações entre contas financeiras internas |
-| `fato_vendas` | 1 linha por venda | Pedidos comerciais vinculados a contratos |
-| `fato_contratos` | 1 linha por contrato | Contratos com métricas calculadas (recorrência, valor base de renovação) |
-| `fato_baixas` | 1 linha por pagamento efetivado | Baixas reais com dados de origem da parcela e metadados de categoria/centro de custo |
-| `fato_fluxo_caixa_realizado` | 1 linha por baixa, com `data_fluxo` | Visão de caixa realizado (baseado na data de pagamento efetivo) |
-| `fato_fluxo_caixa_compromissado` | 1 linha por parcela, com `data_fluxo` | Visão de caixa compromissado (baseado na data de vencimento) |
-| `fato_financeiro_consolidado` | 1 linha por parcela | União de receitas e despesas com colunas de competência e vencimento |
-| `fato_saldos_contas` | 1 linha por conta financeira | Saldo atual de cada conta |
+| Tabela | Descrição |
+|---|---|
+| `fato_contas_a_receber` | Parcelas a receber com status e flags de vencimento |
+| `fato_contas_a_pagar` | Parcelas a pagar com status e flags de vencimento |
+| `fato_transferencias` | Movimentações entre contas internas |
+| `fato_vendas` | Pedidos comerciais |
+| `fato_contratos` | Contratos com métricas de recorrência |
+| `fato_baixas` | Pagamentos efetivados |
+| `fato_fluxo_caixa_realizado` | Caixa real (baseado na data de pagamento) |
+| `fato_fluxo_caixa_compromissado` | Caixa futuro (baseado na data de vencimento) |
+| `fato_financeiro_consolidado` | União de receitas e despesas |
+| `fato_saldos_contas` | Saldo atual de cada conta financeira |
 
-### Campos calculados relevantes
+### Migration inicial
 
-| Campo | Tabela(s) | Descrição |
-|---|---|---|
-| `tipo_evento` | `fato_contas_a_receber/pagar` | `"RECEITA"` ou `"DESPESA"` |
-| `valor_documento_sinal` | `fato_contas_a_receber/pagar` | Valor com sinal: positivo para receitas, negativo para despesas |
-| `esta_vencido` | `fato_contas_a_receber/pagar` | `true` se vencimento passou e não está quitado |
-| `status_normalizado` | `fato_contas_a_receber/pagar` | Status em maiúsculas para facilitar filtros |
-| `valor_baixa_sinal` | `fato_baixas` | Valor pago com sinal (positivo/negativo conforme tipo) |
-| `possui_historico_recorrente` | `fato_contratos` | `true` se o contrato tem 4 ou mais vendas vinculadas |
-| `elegivel_renovacao_sem_churn` | `fato_contratos` | `true` se o contrato está ativo, tem histórico e tem valor base calculado |
-| `entrada_dre` | `dim_categoria` | Classificação DRE da categoria (ex: `DEDUCOES_RECEITA_BRUTA`) |
+O arquivo [`migrations/001_init_supabase.sql`](migrations/001_init_supabase.sql) cria as tabelas `bi_cenarios` e `bi_oauth_tokens` com RLS. Deve ser executado **uma única vez** no SQL Editor do Supabase ao configurar um novo projeto.
+
+As tabelas de analytics (`fato_*`, `dim_*`) **não precisam de migration** — são criadas automaticamente pelo ETL.
 
 ---
 
-## 10. Estrutura do código
+## 10. Manutenção e troubleshooting
 
-```
-contaazul_bi/
-├── __init__.py
-├── config.py             ← Todas as configurações lidas do .env
-├── oauth.py              ← Gerenciamento de tokens OAuth (login, refresh automático)
-├── client.py             ← Cliente HTTP: paginação, retry, tratamento de erros
-├── main.py               ← Orquestrador do pipeline + CLI (authorize / run)
-├── logging_utils.py      ← Configuração do formato de log
-├── utils.py              ← Funções auxiliares (Parquet, JSON, datas, coalesce)
-├── extractors/
-│   ├── finance.py        ← Categorias, contas, transferências, baixas
-│   ├── sales.py          ← Vendas
-│   ├── contracts.py      ← Contratos
-│   ├── people.py         ← Pessoas (clientes/fornecedores)
-│   └── invoices.py       ← Notas fiscais (desabilitado por padrão)
-└── transformers/
-    └── analytics.py      ← Toda a lógica de transformação e montagem do star schema
-```
+### Reautorização OAuth (token expirado)
 
-### Como cada parte se encaixa
+O ETL renova os tokens automaticamente a cada execução. A reautorização manual é necessária apenas se:
+- O refresh token expirar por inatividade prolongada
+- O acesso for revogado no painel do Conta Azul
 
-```
-.env
- └─► config.py (Settings)
-       └─► oauth.py (ContaAzulOAuthManager)     ← cuida do token de acesso
-             └─► client.py (ContaAzulClient)    ← faz as chamadas HTTP
-                   └─► extractors/*.py          ← sabem quais endpoints chamar
-                         └─► main.py            ← orquestra tudo e chama analytics.py
-                               └─► transformers/analytics.py
-                                     └─► output/analytics/*.parquet
-```
+**Como reautorizar:**
 
-### Detalhes de cada módulo
+**1.** Abra a URL de autorização no navegador (gerada pelo comando abaixo):
 
-**`config.py`**
-Lê todas as variáveis do `.env` e as expõe como atributos tipados na classe `Settings`. Calcula automaticamente as janelas de data (`dynamic_date_from`, `dynamic_date_to`) com base na data de hoje e nos anos de lookback/lookahead configurados. A data de referência é fixada no momento em que o pipeline é iniciado — ela não muda no meio da execução.
-
-**`oauth.py`**
-Implementa o fluxo OAuth 2.0. Salva os tokens em `.secrets/conta_azul_tokens.json` e os renova automaticamente quando expiram (normalmente a cada 1 hora). O pipeline nunca solicita nova autorização manual — apenas a primeira vez.
-
-**`client.py`**
-Toda comunicação com a API passa por aqui. Funcionalidades importantes:
-- **Paginação automática**: continua buscando páginas até trazer todos os registros
-- **Retry inteligente**: erros de rede e erros 5xx/429 são retentados com espera progressiva (1s, 2s, 4s...); erros 4xx (requisição inválida) **não** são retentados pois são permanentes
-- **Renovação de token**: ao receber erro 401 (token expirado), renova e tenta novamente
-
-**`main.py`**
-O orquestrador. Define a ordem de extração, faz o "backfill" de contratos ausentes (contratos referenciados em vendas mas não retornados pelo endpoint de contratos são reconstruídos a partir das vendas), e gerencia o fluxo de parcelas para busca de baixas.
-
-**`transformers/analytics.py`**
-A lógica analítica. Recebe os DataFrames brutos e devolve o dicionário com todas as tabelas do star schema. Nenhuma chamada HTTP acontece aqui — é puramente transformação em memória.
-
----
-
-## 11. Como conectar ao Power BI
-
-### Opção A — Conectar diretamente aos arquivos Parquet
-
-1. Abra o Power BI Desktop
-2. Clique em **Obter Dados → Parquet**
-3. Aponte para a pasta `output/analytics/`
-4. Repita para cada tabela que deseja importar, ou use **Power Query** para criar uma função que carregue todas de uma vez
-
-### Opção B — Usar uma pasta como fonte
-
-1. **Obter Dados → Pasta**
-2. Aponte para `output/analytics/`
-3. No Power Query, filtre pelo nome do arquivo para separar as tabelas
-
-### Atualização dos dados no Power BI
-
-1. Execute o pipeline Python: `python -m contaazul_bi.main run`
-2. No Power BI Desktop, clique em **Atualizar**
-
-Os arquivos Parquet são sobrescritos a cada execução — o Power BI lerá automaticamente os dados mais recentes ao atualizar.
-
-> **Dica:** Para automatizar a execução diária, crie uma tarefa no **Agendador de Tarefas do Windows** apontando para:
-> ```
-> python "caminho\completo\para\contaazul_bi\main.py" run
-> ```
-> Ou use o script PowerShell em `tools/build_forecast_workbook.ps1` como referência.
-
----
-
-## 12. Diagnóstico e solução de problemas
-
-### "Token store vazio. Execute `authorize` primeiro."
-
-O arquivo `.secrets/conta_azul_tokens.json` não existe. Execute a autorização inicial:
 ```bash
 python -m contaazul_bi.main authorize
 ```
 
-### "Variável de ambiente obrigatória não informada: CONTA_AZUL_CLIENT_ID"
+> Se o terminal não aceitar input interativo, copie a URL exibida, abra no navegador, faça login e copie a URL final de redirecionamento.
 
-O arquivo `.env` não foi encontrado ou está incompleto. Verifique se ele existe na raiz do projeto e contém `CONTA_AZUL_CLIENT_ID` e `CONTA_AZUL_CLIENT_SECRET`.
+**2.** Após autorizar, o Conta Azul redireciona para `https://scua.com.br/?code=...&state=...`. Copie essa URL completa.
 
-### "Autorização recusada. error=invalid_client"
+**3.** Execute no terminal Python para trocar o code pelos tokens sem o fluxo interativo:
 
-As credenciais `CLIENT_ID`/`CLIENT_SECRET` estão incorretas. Verifique no painel do Conta Azul.
+```python
+# Dentro do diretório do projeto, com o .env configurado
+from contaazul_bi.config import Settings
+from contaazul_bi.oauth import ContaAzulOAuthManager
 
-### "State do OAuth divergente"
-
-A URL colada no terminal não corresponde à sessão de autorização iniciada. Tente o fluxo novamente sem recarregar a página do navegador.
-
-### O pipeline demora muito ou trava na extração de baixas
-
-A extração de baixas faz uma chamada por parcela. Com muitas parcelas, isso é esperado. Para reduzir o tempo, diminua a janela de busca no `.env`:
-```dotenv
-CONTA_AZUL_LOOKBACK_YEARS=1
-CONTA_AZUL_INSTALLMENT_LOOKBACK_MONTHS=6
+settings = Settings.from_env()
+manager = ContaAzulOAuthManager(settings)
+manager.exchange_code_for_tokens("COLE_O_CODE_AQUI")
 ```
 
-### `WARNING: Tabela 'dim_pessoa' retornou 0 linhas`
+Os novos tokens são salvos automaticamente no Supabase.
 
-O endpoint `/v1/pessoas` retornou vazio. Isso pode indicar falta de permissão no app OAuth ou que o módulo de pessoas não está habilitado no plano do Conta Azul. O pipeline continua normalmente — apenas esta tabela ficará vazia.
+### Dashboard não carrega dados
 
-### `WARNING: Foram identificados N contratos referenciados em vendas que não vieram do endpoint de contratos`
+1. Verifique se o ETL rodou com sucesso recentemente (aba Actions no GitHub)
+2. Se não rodou: acione manualmente e aguarde a conclusão
+3. Se o dashboard ainda mostrar aviso de dados ausentes: verifique se `DATABASE_URL` está correta no Railway
 
-Vendas estão vinculadas a contratos que o endpoint `/v1/contratos` não retornou (contratos muito antigos, fora da janela de datas, ou excluídos). O pipeline cria registros substitutos automaticamente a partir das vendas para não perder o vínculo analítico.
+### Adicionar o schema `bi_analytics` ao Supabase (novo projeto)
 
-### Como ativar logs mais detalhados
+Após criar o projeto Supabase e rodar a migration inicial, execute no SQL Editor:
 
-No `.env`:
-```dotenv
-CONTA_AZUL_LOG_LEVEL=DEBUG
+```sql
+CREATE SCHEMA IF NOT EXISTS bi_analytics;
+
+GRANT USAGE ON SCHEMA bi_analytics TO service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA bi_analytics TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA bi_analytics
+    GRANT ALL ON TABLES TO service_role;
 ```
 
-Isso exibirá todos os detalhes das chamadas HTTP, útil para diagnosticar erros de API.
+Em seguida, acione o ETL manualmente para popular as tabelas.
+
+### Logs de diagnóstico
+
+- **ETL:** GitHub → Actions → execução → step "Executar pipeline ETL"
+- **Dashboard:** Railway → seu serviço → aba Logs
+- **Banco:** Supabase → SQL Editor (para inspecionar dados diretamente)
 
 ---
 
-## 13. Referência de todas as variáveis de ambiente
+## 11. Responsável e transferência de ownership
 
-| Variável | Obrigatória | Padrão | Descrição |
-|---|---|---|---|
-| `CONTA_AZUL_CLIENT_ID` | Sim | — | ID do app OAuth no Conta Azul |
-| `CONTA_AZUL_CLIENT_SECRET` | Sim | — | Secret do app OAuth no Conta Azul |
-| `CONTA_AZUL_REDIRECT_URI` | Sim | `https://scua.com.br/` | URI de redirecionamento cadastrada no app |
-| `CONTA_AZUL_SCOPE` | Não | `openid profile aws.cognito.signin.user.admin` | Escopos OAuth solicitados |
-| `CONTA_AZUL_AUTH_BASE_URL` | Não | `https://auth.contaazul.com` | Base URL do servidor de autenticação |
-| `CONTA_AZUL_API_BASE_URL` | Não | `https://api-v2.contaazul.com` | Base URL da API de dados |
-| `CONTA_AZUL_TOKEN_STORE_PATH` | Não | `.secrets/conta_azul_tokens.json` | Onde salvar os tokens OAuth |
-| `CONTA_AZUL_OUTPUT_DIR` | Não | `output` | Pasta raiz de saída dos arquivos Parquet |
-| `CONTA_AZUL_LOG_LEVEL` | Não | `INFO` | Nível de log: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
-| `CONTA_AZUL_TIMEOUT_SECONDS` | Não | `60` | Timeout (em segundos) de cada chamada HTTP |
-| `CONTA_AZUL_PAGE_SIZE` | Não | `100` | Quantos registros por página na paginação |
-| `CONTA_AZUL_LOOKBACK_YEARS` | Não | `3` | Quantos anos no passado buscar (janela de datas) |
-| `CONTA_AZUL_LOOKAHEAD_YEARS` | Não | `3` | Quantos anos no futuro buscar (ex: parcelas futuras) |
-| `CONTA_AZUL_INSTALLMENT_LOOKBACK_MONTHS` | Não | `12` | Quantos meses retroativos considerar para buscar baixas |
-| `CONTA_AZUL_ENABLE_SALES` | Não | `true` | Ativa extração de vendas |
-| `CONTA_AZUL_ENABLE_CONTRACTS` | Não | `true` | Ativa extração de contratos |
-| `CONTA_AZUL_ENABLE_PEOPLE` | Não | `true` | Ativa extração de pessoas |
-| `CONTA_AZUL_ENABLE_INVOICES` | Não | `false` | Ativa extração de notas fiscais (beta) |
-| `CONTA_AZUL_ENABLE_INSTALLMENT_ENRICHMENT` | Não | `false` | Ativa enriquecimento de parcelas (necessário para baixas) |
-| `CONTA_AZUL_ENABLE_ACQUITTANCES` | Não | `false` | Ativa extração de baixas (depende do enriquecimento) |
+| Campo | Valor |
+|---|---|
+| Responsável atual | Thiago Carvalho |
+| Contato | — |
+| Repositório | `github.com/thiagocangussuc/bi-finance-scua` (privado) |
+| Dashboard | URL pública configurada no Railway |
+| Supabase | Projeto na organização Scua |
 
-> **Nota sobre `ENABLE_ACQUITTANCES`:** Para que a extração de baixas funcione, tanto `ENABLE_INSTALLMENT_ENRICHMENT` quanto `ENABLE_ACQUITTANCES` precisam estar como `true`. As baixas são o detalhamento dos pagamentos efetivos — são a base do `fato_fluxo_caixa_realizado`.
+### Para transferir o projeto
+
+1. **GitHub:** Transferir o repositório em Settings → Danger Zone → Transfer repository
+2. **Railway:** Convidar o novo responsável como membro do projeto e remover o anterior
+3. **Supabase:** Transferir a organização ou convidar o novo responsável como admin
+4. **Secrets:** Compartilhar de forma segura os valores de `CONTA_AZUL_CLIENT_ID`, `CONTA_AZUL_CLIENT_SECRET` e `DATABASE_URL`
+5. **Reautorização:** O novo responsável precisará reautorizar o OAuth com sua conta do Conta Azul (ver seção 10)
