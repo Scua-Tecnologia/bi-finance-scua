@@ -1862,6 +1862,15 @@ def main() -> None:
     _run_auth()
     data = load_data()
 
+    # Guarda mínima: se as tabelas principais ainda não existem no banco, exibe aviso claro.
+    if "cr" not in data or "cp" not in data:
+        st.warning(
+            "Os dados ainda não foram carregados no banco de dados. "
+            "Execute o pipeline ETL manualmente no GitHub Actions para popular o Supabase.",
+            icon="⚠️",
+        )
+        st.stop()
+
     with st.sidebar:
         if LOGO_PATH.exists():
             st.image(str(LOGO_PATH), use_container_width=True)
