@@ -257,7 +257,7 @@ O pipeline ETL roda automaticamente via GitHub Actions, conforme definido em [`.
 
 ### Agendamento
 
-O ETL executa **todos os dias às 05:00 BRT** (08:00 UTC), de segunda a domingo.
+O ETL executa **todos os dias às 12:00 BRT** (15:00 UTC), de segunda a domingo.
 
 ### Secrets necessários no GitHub
 

@@ -833,13 +833,19 @@ def calc_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], cats_sel
     )
 
 
-def calc_proj_4_meses(data: dict) -> dict[str, float]:
-    """Caixa liquido projetado por mes para mes atual + 3 proximos. Sem filtros."""
+def calc_proj_4_meses(
+    data: dict,
+    centros_sel: list[str] | None = None,
+    cats_sel: list[str] | None = None,
+) -> dict[str, float]:
+    """Caixa liquido projetado por mes para mes atual + 3 proximos."""
     hoje  = pd.Timestamp.today().normalize()
     ontem = hoje - pd.Timedelta(days=1)
-    cr    = data["cr"]
-    cp    = data["cp"]
-    real  = data["realizado"]
+    centros_sel = centros_sel or []
+    cats_sel    = cats_sel    or []
+    cr   = _filtrar_categoria(_filtrar_centro(data["cr"].copy(), centros_sel), cats_sel)
+    cp   = _filtrar_categoria(_filtrar_centro(data["cp"].copy(), centros_sel), cats_sel)
+    real = _filtrar_categoria_real(_filtrar_centro_real(data["realizado"].copy(), centros_sel), cats_sel)
     periodos = pd.period_range(hoje.to_period("M"), periods=4, freq="M")
     result: dict[str, float] = {}
     for p in periodos:
@@ -1316,7 +1322,7 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
             f"Fluxo de Caixa — {MESES_PT[mes]} {ano}",
         ))
     with g2:
-        proj_4m = calc_proj_4_meses(data)          # sem filtros
+        proj_4m = calc_proj_4_meses(data, centros_sel=centros_sel, cats_sel=cats_sel)
         render_chart(fig_proj_4_meses(proj_4m))
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1470,12 +1476,18 @@ def _serie_mensal_com_cenario(
     return base
 
 
-def calc_proj_4_meses_cenario(data: dict, projecoes: list, excluidos: list) -> dict[str, float]:
+def calc_proj_4_meses_cenario(
+    data: dict,
+    projecoes: list,
+    excluidos: list,
+    centros_sel: list[str] | None = None,
+    cats_sel: list[str] | None = None,
+) -> dict[str, float]:
     """
     4-month projection including manual projections and auto-renewal.
-    Not filter-sensitive (same as calc_proj_4_meses).
+    Sensitive to category and cost center filters.
     """
-    base = calc_proj_4_meses(data)
+    base = calc_proj_4_meses(data, centros_sel=centros_sel, cats_sel=cats_sel)
     hoje = pd.Timestamp.today().normalize()
     periodos = pd.period_range(hoje.to_period("M"), periods=4, freq="M")
 
@@ -1824,7 +1836,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
                     serie_dia.loc[d, "saldo"] = serie_dia.loc[prev, "saldo"] + delta
         render_chart(fig_fluxo_diario(serie_dia, f"Fluxo de Caixa com Cenario — {MESES_PT[mes]} {ano}"))
     with g2:
-        proj_4m = calc_proj_4_meses_cenario(data, projecoes, excluidos_ef)
+        proj_4m = calc_proj_4_meses_cenario(data, projecoes, excluidos_ef, centros_sel=centros_sel, cats_sel=cats_sel)
         render_chart(fig_proj_4_meses(proj_4m))
 
     st.markdown("<br>", unsafe_allow_html=True)
