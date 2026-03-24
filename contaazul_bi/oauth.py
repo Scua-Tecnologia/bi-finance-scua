@@ -69,17 +69,32 @@ class SupabaseTokenStore:
             with self._engine.connect() as conn:
                 row = conn.execute(
                     text(
-                        "SELECT access_token, refresh_token, token_type, expires_in, obtained_at "
+                        "SELECT access_token, refresh_token, token_type, expires_in, obtained_at, atualizado_em "
                         "FROM bi_oauth_tokens WHERE id = 1"
                     )
                 ).mappings().fetchone()
             if row and row["obtained_at"] and float(row["obtained_at"]) > 0:
+                obtained_at = float(row["obtained_at"])
+                atualizado_em = row["atualizado_em"]
+                expires_in = int(row["expires_in"] or 3600)
+                access_expires_at = time.strftime(
+                    "%Y-%m-%d %H:%M:%S UTC", time.gmtime(obtained_at + expires_in)
+                )
+                logger.info(
+                    "Tokens carregados do Supabase | "
+                    "access_token expira em: %s | "
+                    "refresh_token salvo em: %s | "
+                    "refresh_token (últimos 8 chars): ...%s",
+                    access_expires_at,
+                    atualizado_em,
+                    row["refresh_token"][-8:] if row["refresh_token"] else "N/A",
+                )
                 return OAuthTokenBundle(
                     access_token=row["access_token"],
                     refresh_token=row["refresh_token"],
                     token_type=row["token_type"] or "Bearer",
-                    expires_in=int(row["expires_in"] or 3600),
-                    obtained_at=float(row["obtained_at"]),
+                    expires_in=expires_in,
+                    obtained_at=obtained_at,
                 )
         except Exception as exc:
             logger.warning("Falha ao carregar tokens do Supabase: %s", exc)
@@ -110,6 +125,13 @@ class SupabaseTokenStore:
                         "oa": bundle.obtained_at,
                     },
                 )
+            logger.info(
+                "Tokens salvos no Supabase | "
+                "access_token obtido em: %s | "
+                "refresh_token (últimos 8 chars): ...%s",
+                time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(bundle.obtained_at)),
+                bundle.refresh_token[-8:] if bundle.refresh_token else "N/A",
+            )
         except Exception as exc:
             logger.error("Falha ao salvar tokens no Supabase: %s", exc)
             raise
@@ -200,6 +222,18 @@ class ContaAzulOAuthManager:
             data=data,
             timeout=self.settings.timeout_seconds,
         )
+        if not response.ok:
+            logger.error(
+                "Falha ao renovar tokens (HTTP %s): %s",
+                response.status_code,
+                response.text,
+            )
+            if response.status_code == 400:
+                raise RuntimeError(
+                    f"Refresh token inválido ou expirado (HTTP 400). "
+                    f"Execute `python -m contaazul_bi.main authorize` para re-autorizar. "
+                    f"Resposta do servidor: {response.text}"
+                )
         response.raise_for_status()
         payload = response.json()
         bundle = OAuthTokenBundle(
