@@ -257,7 +257,7 @@ O pipeline ETL roda automaticamente via GitHub Actions, conforme definido em [`.
 
 ### Agendamento
 
-O ETL executa **todos os dias às 12:00 BRT** (15:00 UTC), de segunda a domingo.
+O ETL executa **todos os dias às 10:00 BRT** (13:00 UTC), de segunda a domingo.
 
 ### Secrets necessários no GitHub
 
@@ -277,6 +277,8 @@ Configure em: **GitHub → Settings → Secrets and variables → Actions**
 3. Selecione o workflow **ETL — Conta Azul → Supabase**
 4. Clique em **Run workflow**
 
+> O workflow agora executa um passo explícito de validação OAuth (`oauth-status --force-refresh`) antes do ETL. Isso evita falsos positivos: um run manual só é considerado saudável se o refresh também funcionar.
+
 ### O que o ETL faz
 
 ```
@@ -292,7 +294,9 @@ Configure em: **GitHub → Settings → Secrets and variables → Actions**
 
 | Erro | Causa provável | Solução |
 |---|---|---|
-| `Token store vazio` ou `400 Bad Request` ao renovar token | Refresh token expirado | Reautorizar (ver seção 10) |
+| `Token store vazio` | OAuth ainda não autorizado neste ambiente | Execute `python -m contaazul_bi.main authorize` uma vez com `DATABASE_URL` apontando para o Supabase |
+| `OAuth invalid_client` | `CONTA_AZUL_CLIENT_ID` / `CONTA_AZUL_CLIENT_SECRET` / `CONTA_AZUL_REDIRECT_URI` não batem com o app OAuth que emitiu o refresh token salvo | Corrija os GitHub Secrets e, se o app/secret tiver mudado, reautorize uma única vez com as credenciais atuais |
+| `OAuth invalid_grant` | Refresh token expirou, foi revogado ou ficou inválido | Reautorize (ver seção 10) |
 | `could not translate host name` | `DATABASE_URL` incorreta no GitHub Secret | Corrija o secret com a URL real do Supabase |
 | `timeout` | API do Conta Azul lenta | Aumente `CONTA_AZUL_TIMEOUT_SECONDS` no workflow |
 | Qualquer outro erro | Ver logs detalhados | Actions → execução com falha → step "Executar pipeline ETL" |
@@ -391,11 +395,12 @@ As tabelas de analytics (`fato_*`, `dim_*`) **não precisam de migration** — s
 
 ## 10. Manutenção e troubleshooting
 
-### Reautorização OAuth (token expirado)
+### Reautorização OAuth (token inválido, revogado ou credenciais alteradas)
 
 O ETL renova os tokens automaticamente a cada execução. A reautorização manual é necessária apenas se:
 - O refresh token expirar por inatividade prolongada
 - O acesso for revogado no painel do Conta Azul
+- O `client_id`, o `client_secret` ou a `redirect_uri` do app OAuth forem alterados
 
 **Como reautorizar:**
 
@@ -409,7 +414,21 @@ python -m contaazul_bi.main authorize
 
 **2.** Após autorizar, o Conta Azul redireciona para `https://scua.com.br/?code=...&state=...`. Copie essa URL completa.
 
-**3.** Execute no terminal Python para trocar o code pelos tokens sem o fluxo interativo:
+**3.** Grave os novos tokens no Supabase com uma destas opções:
+
+Via CLI, sem prompt interativo:
+
+```bash
+python -m contaazul_bi.main authorize --redirected-url "https://scua.com.br/?code=...&state=..."
+```
+
+Via CLI, se você já extraiu apenas o `code`:
+
+```bash
+python -m contaazul_bi.main authorize --code "COLE_O_CODE_AQUI"
+```
+
+Via Python (equivalente ao comando acima):
 
 ```python
 # Dentro do diretório do projeto, com o .env configurado
@@ -422,6 +441,14 @@ manager.exchange_code_for_tokens("COLE_O_CODE_AQUI")
 ```
 
 Os novos tokens são salvos automaticamente no Supabase.
+
+**4.** Depois de atualizar os GitHub Secrets ou de reautorizar, execute um run manual do workflow e confirme que o passo abaixo passa com sucesso:
+
+```bash
+python -m contaazul_bi.main oauth-status --force-refresh
+```
+
+> Atualizar o secret no GitHub tem efeito imediato na próxima execução, mas isso não reemite o refresh token salvo no Supabase. Se o token atual tiver sido emitido por outro app OAuth, será necessária uma reautorização única com as credenciais novas.
 
 ### Dashboard não carrega dados
 

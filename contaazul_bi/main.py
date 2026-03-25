@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -40,34 +41,53 @@ class ContaAzulETLPipeline:
         self.contracts = ContractsExtractor(self.client)
         self.invoices = InvoiceExtractor(self.client)
 
-    def authorize(self, open_browser: bool = True) -> None:
-        auth_url, expected_state = self.oauth_manager.build_authorization_url()
-        logger.info("URL de autorização gerada.")
-
-        print("\nAbra a URL abaixo no navegador e autorize o aplicativo:\n")
-        print(auth_url)
-        print()
-        print(
-            "Depois da autorização, o Conta Azul vai redirecionar para a sua URL cadastrada.\n"
-            "Copie a URL FINAL completa do navegador e cole no terminal."
-        )
-        print()
-
-        if open_browser:
-            webbrowser.open(auth_url)
-
-        redirected_url = input("Cole aqui a URL final completa após a autorização:\n").strip()
-
-        if not redirected_url:
-            raise RuntimeError("Nenhuma URL foi informada.")
-
+    @staticmethod
+    def _parse_redirected_url(redirected_url: str) -> tuple[str | None, str | None, str | None, str | None]:
         parsed = urlparse(redirected_url)
         query = parse_qs(parsed.query)
-
         code = query.get("code", [None])[0]
         returned_state = query.get("state", [None])[0]
         error = query.get("error", [None])[0]
         error_description = query.get("error_description", [None])[0]
+        return code, returned_state, error, error_description
+
+    def authorize(
+        self,
+        open_browser: bool = True,
+        *,
+        redirected_url: str | None = None,
+        code: str | None = None,
+    ) -> None:
+        if code:
+            self.oauth_manager.exchange_code_for_tokens(code)
+            logger.info("Autorização concluída com sucesso a partir de código informado diretamente.")
+            print("\nAutorização concluída com sucesso.\n")
+            return
+
+        expected_state: str | None = None
+        if redirected_url is None:
+            auth_url, expected_state = self.oauth_manager.build_authorization_url()
+            logger.info("URL de autorização gerada.")
+
+            print("\nAbra a URL abaixo no navegador e autorize o aplicativo:\n")
+            print(auth_url)
+            print()
+            print(
+                "Depois da autorização, o Conta Azul vai redirecionar para a sua URL cadastrada.\n"
+                "Copie a URL FINAL completa do navegador e cole no terminal."
+            )
+            print()
+
+            if open_browser:
+                webbrowser.open(auth_url)
+
+        if redirected_url is None:
+            redirected_url = input("Cole aqui a URL final completa após a autorização:\n").strip()
+
+        if not redirected_url:
+            raise RuntimeError("Nenhuma URL foi informada.")
+
+        code, returned_state, error, error_description = self._parse_redirected_url(redirected_url)
 
         if error:
             raise RuntimeError(
@@ -80,14 +100,42 @@ class ContaAzulETLPipeline:
                 "Verifique se você colou a URL final completa do navegador."
             )
 
-        if returned_state != expected_state:
+        if expected_state and returned_state != expected_state:
             raise RuntimeError(
                 "State do OAuth divergente. A autorização foi abortada por segurança."
+            )
+        if expected_state is None and returned_state:
+            logger.warning(
+                "URL de redirecionamento informada via argumento recebida sem validacao local do state. "
+                "Isso e esperado quando o fluxo ja foi concluido no navegador e o code esta sendo importado depois."
             )
 
         self.oauth_manager.exchange_code_for_tokens(code)
         logger.info("Autorização inicial concluída com sucesso.")
         print("\nAutorização concluída com sucesso.\n")
+
+    def oauth_status(self, force_refresh: bool = False) -> dict[str, str | bool | None]:
+        status = self.oauth_manager.token_status()
+        logger.info(
+            "OAuth status | token_store=%s | fingerprint=%s | redirect_uri=%s | token_present=%s | "
+            "refresh_token_present=%s | access_token_expires_at=%s | access_token_expired=%s",
+            status["token_store"],
+            status["oauth_config_fingerprint"],
+            status["redirect_uri"],
+            status["token_present"],
+            status["refresh_token_present"],
+            status["access_token_expires_at_utc"],
+            status["access_token_expired"],
+        )
+        if force_refresh:
+            logger.info("Executando refresh explicito para validar as credenciais OAuth deste ambiente...")
+            self.oauth_manager.force_refresh()
+            status = self.oauth_manager.token_status()
+            logger.info(
+                "Refresh OAuth concluido com sucesso | access_token_expires_at=%s",
+                status["access_token_expires_at_utc"],
+            )
+        return status
 
     @staticmethod
     def _candidate_installment_id_columns(frame: pd.DataFrame) -> list[str]:
@@ -371,7 +419,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     authorize_parser = subparsers.add_parser("authorize", help="Executa a autorização OAuth inicial")
     authorize_parser.add_argument("--no-browser", action="store_true", help="Não abre o navegador automaticamente")
+    authorize_parser.add_argument(
+        "--redirected-url",
+        help="URL final de redirecionamento retornada pelo navegador após a autorização",
+    )
+    authorize_parser.add_argument(
+        "--code",
+        help="Código OAuth já extraído da URL de redirecionamento",
+    )
 
+    oauth_status_parser = subparsers.add_parser("oauth-status", help="Exibe o status do OAuth e pode testar o refresh")
+    oauth_status_parser.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Executa um refresh explícito para validar client_id/client_secret/redirect_uri e o refresh token salvo",
+    )
     subparsers.add_parser("run", help="Executa o pipeline de extração e transformação")
     return parser
 
@@ -385,7 +447,16 @@ def main(argv: list[str] | None = None) -> int:
     pipeline = ContaAzulETLPipeline(settings)
 
     if args.command == "authorize":
-        pipeline.authorize(open_browser=not args.no_browser)
+        pipeline.authorize(
+            open_browser=not args.no_browser,
+            redirected_url=args.redirected_url,
+            code=args.code,
+        )
+        return 0
+
+    if args.command == "oauth-status":
+        status = pipeline.oauth_status(force_refresh=args.force_refresh)
+        print(json.dumps(status, ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "run":

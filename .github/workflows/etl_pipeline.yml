@@ -17,6 +17,33 @@ jobs:
     name: Extração e carga no Supabase
     runs-on: ubuntu-latest
     timeout-minutes: 30   # pipeline típico: 3-5 min; 30 min é margem segura
+    env:
+      # ── Conta Azul — OAuth (GitHub Secrets) ────────────────────────────────
+      CONTA_AZUL_CLIENT_ID:      ${{ secrets.CONTA_AZUL_CLIENT_ID }}
+      CONTA_AZUL_CLIENT_SECRET:  ${{ secrets.CONTA_AZUL_CLIENT_SECRET }}
+      CONTA_AZUL_REDIRECT_URI:   ${{ secrets.CONTA_AZUL_REDIRECT_URI }}
+
+      # ── Supabase (GitHub Secrets) ───────────────────────────────────────────
+      # Tokens OAuth, tabelas de analytics e cenários são lidos/gravados aqui.
+      DATABASE_URL:              ${{ secrets.DATABASE_URL }}
+
+      # ── Módulos habilitados ─────────────────────────────────────────────────
+      CONTA_AZUL_ENABLE_SALES:                   'true'
+      CONTA_AZUL_ENABLE_CONTRACTS:               'true'
+      CONTA_AZUL_ENABLE_PEOPLE:                  'false'
+      CONTA_AZUL_ENABLE_INVOICES:                'false'
+      CONTA_AZUL_ENABLE_INSTALLMENT_ENRICHMENT:  'true'
+      CONTA_AZUL_ENABLE_ACQUITTANCES:            'true'
+
+      # ── Janela temporal ─────────────────────────────────────────────────────
+      CONTA_AZUL_LOOKBACK_YEARS:               '1'
+      CONTA_AZUL_LOOKAHEAD_YEARS:              '1'
+      CONTA_AZUL_INSTALLMENT_LOOKBACK_MONTHS:  '12'
+
+      # ── HTTP ────────────────────────────────────────────────────────────────
+      CONTA_AZUL_TIMEOUT_SECONDS:  '120'
+      CONTA_AZUL_PAGE_SIZE:        '100'
+      CONTA_AZUL_LOG_LEVEL:        'INFO'
 
     steps:
       # ── 1. Código ────────────────────────────────────────────────────────────
@@ -33,48 +60,30 @@ jobs:
       - name: Instalar dependências
         run: pip install --no-cache-dir -r requirements.txt
 
-      # ── 4. Pipeline ETL ───────────────────────────────────────────────────────
+      # ── 4. Validação OAuth ───────────────────────────────────────────────────
+      # Atualizar GitHub Secrets não "converte" automaticamente o refresh_token
+      # salvo no Supabase. Se o refresh_token tiver sido emitido por outro app
+      # OAuth, este passo falha cedo com diagnóstico explícito.
+      - name: Validar OAuth e renovar token
+        run: python -m contaazul_bi.main oauth-status --force-refresh
+
+      # ── 5. Pipeline ETL ───────────────────────────────────────────────────────
       # Pré-requisito (único, one-time, feito localmente):
       #   python -m contaazul_bi.main authorize
       # Isso salva os tokens OAuth na tabela bi_oauth_tokens do Supabase.
       # A partir daí, este workflow renova os tokens automaticamente via
       # refresh_token a cada execução.
       - name: Executar pipeline ETL
-        env:
-          # ── Conta Azul — OAuth (GitHub Secrets) ────────────────────────────
-          CONTA_AZUL_CLIENT_ID:      ${{ secrets.CONTA_AZUL_CLIENT_ID }}
-          CONTA_AZUL_CLIENT_SECRET:  ${{ secrets.CONTA_AZUL_CLIENT_SECRET }}
-          CONTA_AZUL_REDIRECT_URI:   ${{ secrets.CONTA_AZUL_REDIRECT_URI }}
-
-          # ── Supabase (GitHub Secrets) ───────────────────────────────────────
-          # Tokens OAuth, tabelas de analytics e cenários são lidos/gravados aqui.
-          DATABASE_URL:              ${{ secrets.DATABASE_URL }}
-
-          # ── Módulos habilitados ─────────────────────────────────────────────
-          CONTA_AZUL_ENABLE_SALES:                   'true'
-          CONTA_AZUL_ENABLE_CONTRACTS:               'true'
-          CONTA_AZUL_ENABLE_PEOPLE:                  'false'
-          CONTA_AZUL_ENABLE_INVOICES:                'false'
-          CONTA_AZUL_ENABLE_INSTALLMENT_ENRICHMENT:  'true'
-          CONTA_AZUL_ENABLE_ACQUITTANCES:            'true'
-
-          # ── Janela temporal ─────────────────────────────────────────────────
-          CONTA_AZUL_LOOKBACK_YEARS:               '1'
-          CONTA_AZUL_LOOKAHEAD_YEARS:              '1'
-          CONTA_AZUL_INSTALLMENT_LOOKBACK_MONTHS:  '12'
-
-          # ── HTTP ────────────────────────────────────────────────────────────
-          CONTA_AZUL_TIMEOUT_SECONDS:  '120'
-          CONTA_AZUL_PAGE_SIZE:        '100'
-          CONTA_AZUL_LOG_LEVEL:        'INFO'
         run: python -m contaazul_bi.main run
 
-      # ── 5. Diagnóstico em caso de falha ───────────────────────────────────────
+      # ── 6. Diagnóstico em caso de falha ───────────────────────────────────────
       - name: Reportar falha
         if: failure()
         run: |
           echo "::error::Pipeline ETL falhou."
           echo "Verifique os logs acima. Causas comuns:"
-          echo "  - Refresh token expirado → reexecute 'python -m contaazul_bi.main authorize' localmente"
+          echo "  - OAuth invalid_client → GitHub Secrets nao combinam com o app OAuth que emitiu o refresh token salvo no Supabase"
+          echo "  - OAuth invalid_grant → refresh token expirou, foi revogado ou ficou invalido"
+          echo "  - Se houve troca de client_id/client_secret/redirect_uri, reexecute 'python -m contaazul_bi.main authorize' com as credenciais atuais"
           echo "  - DATABASE_URL incorreta ou Supabase indisponível"
           echo "  - Timeout na API do Conta Azul (tente aumentar CONTA_AZUL_TIMEOUT_SECONDS)"

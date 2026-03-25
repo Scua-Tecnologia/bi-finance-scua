@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
@@ -151,6 +152,72 @@ class ContaAzulOAuthManager:
         self.authorization_url = f"{settings.auth_base_url}/login"
         self.session = requests.Session()
         self._cached_bundle: OAuthTokenBundle | None = None
+        logger.info(
+            "OAuth config carregada | fingerprint=%s | redirect_uri=%s | token_store=%s",
+            self.configuration_fingerprint(),
+            self.settings.redirect_uri,
+            self.token_store_label(),
+        )
+
+    @staticmethod
+    def _short_hash(value: str) -> str:
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
+
+    @staticmethod
+    def _oauth_error_details(response: requests.Response) -> tuple[str | None, str]:
+        try:
+            payload = response.json()
+        except ValueError:
+            return None, response.text
+
+        if not isinstance(payload, dict):
+            return None, response.text
+
+        error = payload.get("error")
+        description = (
+            payload.get("error_description")
+            or payload.get("message")
+            or response.text
+        )
+        return str(error) if error else None, str(description)
+
+    def configuration_fingerprint(self) -> str:
+        raw = "|".join(
+            [
+                self.settings.client_id,
+                self.settings.client_secret,
+                self.settings.redirect_uri,
+                self.settings.auth_base_url,
+            ]
+        )
+        return self._short_hash(raw)
+
+    def token_store_label(self) -> str:
+        if isinstance(self.token_store, SupabaseTokenStore):
+            return "supabase"
+        return str(self.settings.token_store_path)
+
+    def token_status(self) -> dict[str, str | bool | None]:
+        stored = self._cached_bundle or self.token_store.load()
+        status: dict[str, str | bool | None] = {
+            "token_store": self.token_store_label(),
+            "oauth_config_fingerprint": self.configuration_fingerprint(),
+            "redirect_uri": self.settings.redirect_uri,
+            "auth_base_url": self.settings.auth_base_url,
+            "token_present": stored is not None,
+            "refresh_token_present": bool(stored and stored.refresh_token),
+            "access_token_expires_at_utc": None,
+            "access_token_expired": None,
+        }
+        if stored is None:
+            return status
+
+        status["access_token_expires_at_utc"] = time.strftime(
+            "%Y-%m-%d %H:%M:%S UTC",
+            time.gmtime(stored.expires_at),
+        )
+        status["access_token_expired"] = stored.is_expired(skew_seconds=0)
+        return status
 
     def _basic_auth_header(self) -> str:
         raw = f"{self.settings.client_id}:{self.settings.client_secret}".encode("utf-8")
@@ -223,16 +290,34 @@ class ContaAzulOAuthManager:
             timeout=self.settings.timeout_seconds,
         )
         if not response.ok:
+            oauth_error, oauth_description = self._oauth_error_details(response)
             logger.error(
-                "Falha ao renovar tokens (HTTP %s): %s",
+                "Falha ao renovar tokens (HTTP %s, oauth_error=%s, fingerprint=%s, redirect_uri=%s): %s",
                 response.status_code,
+                oauth_error or "N/A",
+                self.configuration_fingerprint(),
+                self.settings.redirect_uri,
                 response.text,
             )
             if response.status_code == 400:
+                if oauth_error == "invalid_client":
+                    raise RuntimeError(
+                        "OAuth `invalid_client`: o `client_id`/`client_secret` deste ambiente "
+                        "nao foram aceitos pelo Conta Azul, ou o refresh token salvo foi emitido "
+                        "para outro aplicativo OAuth. Confira `CONTA_AZUL_CLIENT_ID`, "
+                        "`CONTA_AZUL_CLIENT_SECRET` e `CONTA_AZUL_REDIRECT_URI` no ambiente "
+                        "atual. Se houve troca de aplicativo ou rotacao de secret, reautorize "
+                        "com as credenciais vigentes usando `python -m contaazul_bi.main authorize`."
+                    )
+                if oauth_error == "invalid_grant":
+                    raise RuntimeError(
+                        "OAuth `invalid_grant`: o refresh token salvo no token store ficou "
+                        "invalido, expirou ou foi revogado. Reexecute "
+                        "`python -m contaazul_bi.main authorize` para reautorizar a integracao."
+                    )
                 raise RuntimeError(
-                    f"Refresh token inválido ou expirado (HTTP 400). "
-                    f"Execute `python -m contaazul_bi.main authorize` para re-autorizar. "
-                    f"Resposta do servidor: {response.text}"
+                    f"Falha ao renovar tokens (HTTP 400, oauth_error={oauth_error or 'desconhecido'}). "
+                    f"Resposta do servidor: {oauth_description}"
                 )
         response.raise_for_status()
         payload = response.json()
