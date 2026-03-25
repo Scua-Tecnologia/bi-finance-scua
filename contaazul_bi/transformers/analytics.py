@@ -395,7 +395,7 @@ def _enrich_contracts_with_sales_metrics(contracts: pd.DataFrame, sales: pd.Data
     for column_name in default_columns:
         metric_column = f"{column_name}_metric"
         if metric_column in out.columns:
-            out[column_name] = out[column_name].where(out[metric_column].isna(), out[metric_column])
+            out[column_name] = out[metric_column].combine_first(out[column_name])
             out = out.drop(columns=[metric_column])
 
     out["possui_venda_apos_vencimento"] = (

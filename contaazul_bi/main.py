@@ -376,6 +376,8 @@ class ContaAzulETLPipeline:
                 }
 
         analytics = build_analytics(raw_frames)
+        if not self.settings.enable_people:
+            analytics.tables.pop("dim_pessoa", None)
         analytics_output: dict[str, object] = {}
 
         for table_name, table_df in analytics.tables.items():
