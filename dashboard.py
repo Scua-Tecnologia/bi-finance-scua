@@ -1275,7 +1275,8 @@ def _ranking_categorias_despesas(
         (cr_f["data_vencimento"].dt.year == ano) & (cr_f["data_vencimento"].dt.month == mes)
     ]
 
-    receita_total = pd.to_numeric(cr_periodo["total"], errors="coerce").fillna(0).sum()
+    receita_total  = pd.to_numeric(cr_periodo["total"], errors="coerce").fillna(0).sum()
+    despesa_total  = pd.to_numeric(cp_periodo["total"], errors="coerce").fillna(0).sum()
 
     rows = []
     for _, row in cp_periodo.iterrows():
@@ -1302,8 +1303,7 @@ def _ranking_categorias_despesas(
         .reset_index(drop=True)
     )
 
-    total_despesas = ranking["Valor"].sum()
-    ranking["% Despesa"] = (ranking["Valor"] / total_despesas * 100) if total_despesas > 0 else 0.0
+    ranking["% Despesa"] = (ranking["Valor"] / despesa_total * 100) if despesa_total > 0 else 0.0
     ranking["% Receita"] = (ranking["Valor"] / receita_total * 100) if receita_total > 0 else 0.0
 
     return ranking
