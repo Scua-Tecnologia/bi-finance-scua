@@ -1303,8 +1303,8 @@ def _ranking_categorias_despesas(
     )
 
     total_despesas = ranking["Valor"].sum()
-    ranking["% Despesa"] = ranking["Valor"] / total_despesas if total_despesas > 0 else 0.0
-    ranking["% Receita"] = ranking["Valor"] / receita_total if receita_total > 0 else 0.0
+    ranking["% Despesa"] = (ranking["Valor"] / total_despesas * 100) if total_despesas > 0 else 0.0
+    ranking["% Receita"] = (ranking["Valor"] / receita_total * 100) if receita_total > 0 else 0.0
 
     return ranking
 
@@ -1393,20 +1393,22 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
     if ranking_df.empty:
         st.info("Nenhuma despesa com vencimento no período selecionado.")
     else:
+        display_df = ranking_df.copy()
+        display_df["Valor"] = display_df["Valor"].apply(
+            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
         st.dataframe(
-            ranking_df,
+            display_df,
             use_container_width=True,
             hide_index=True,
             column_config={
                 "Categoria": st.column_config.TextColumn("Categoria", width="medium"),
-                "Valor": st.column_config.NumberColumn(
-                    "Valor Nominal", format="R$ %.2f", width="small"
-                ),
+                "Valor": st.column_config.TextColumn("Valor Nominal", width="small"),
                 "% Despesa": st.column_config.ProgressColumn(
-                    "% da Despesa Total", format="%.1f%%", min_value=0, max_value=1
+                    "% da Despesa Total", format="%.1f%%", min_value=0, max_value=100
                 ),
                 "% Receita": st.column_config.ProgressColumn(
-                    "% da Receita do Período", format="%.1f%%", min_value=0, max_value=1
+                    "% da Receita do Período", format="%.1f%%", min_value=0, max_value=100
                 ),
             },
         )
