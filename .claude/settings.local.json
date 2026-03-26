@@ -15,7 +15,22 @@
       "Bash(python -c \":*)",
       "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type f -name \"*\")",
       "Bash(ls -la \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\")",
-      "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type f \\\\\\( -name \"*.ps1\" -o -name \"*.sh\" -o -name \"*.json\" -o -name \"*.md\" \\\\\\) ! -path \"*/\\\\.*\" ! -path \"*/output/*\" ! -path \"*/__pycache__/*\")"
+      "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type f \\\\\\( -name \"*.ps1\" -o -name \"*.sh\" -o -name \"*.json\" -o -name \"*.md\" \\\\\\) ! -path \"*/\\\\.*\" ! -path \"*/output/*\" ! -path \"*/__pycache__/*\")",
+      "Bash(find 'c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)' -type f \\\\\\(-name dashboard.py -o -name *.py -o -name *.sh -o -name Dockerfile -o -name *.yml -o -name .gitignore -o -name *.sql -o -name *.toml -o -name *.txt \\\\\\))",
+      "Bash(find \"/c/Users/Thiago Carvalho/OneDrive - Scua/02 - Projeto - BI \\(v2\\)\" -type f -name \"*.py\")",
+      "Bash(find \"/c/Users/Thiago Carvalho/OneDrive - Scua/02 - Projeto - BI \\(v2\\)\" -maxdepth 3 -type f -name \"*.py\" ! -path \"*/.venv/*\")",
+      "Bash(ls -la \"/c/Users/Thiago Carvalho/OneDrive - Scua/02 - Projeto - BI \\(v2\\)/\")",
+      "Bash(find \"/c/Users/Thiago Carvalho/OneDrive - Scua/02 - Projeto - BI \\(v2\\)\" -maxdepth 2 -type d -name \"pages\" -o -name \"app\")",
+      "Bash(wc -l \"/c/Users/Thiago Carvalho/OneDrive - Scua/02 - Projeto - BI \\(v2\\)/dashboard.py\")",
+      "WebFetch(domain:developers.contaazul.com)",
+      "WebSearch",
+      "WebFetch(domain:developers.linkapi.solutions)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:contaazul.com)",
+      "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type f -name \"*.py\")",
+      "Bash(find \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)\" -type d -name \"pages\")",
+      "Bash(ls -la \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)/\")",
+      "Bash(wc -l \"c:\\\\Users\\\\Thiago Carvalho\\\\OneDrive - Scua\\\\02 - Projeto - BI \\(v2\\)/dashboard.py\")"
     ]
   }
 }

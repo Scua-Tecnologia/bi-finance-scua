@@ -1842,7 +1842,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
     st.markdown("<br>", unsafe_allow_html=True)
 
     ultima_real_global = data["realizado"]["data_pagamento"].dt.normalize().dropna().max()
-    saldo_anchor_ano   = _saldo_anchor_para_ano(data, data["saldos"]["saldo_atual"].sum(), ano)
+    saldo_anchor_ano   = _saldo_anchor_para_ano(data, m["saldo_atual"], ano)
     serie_anual = _serie_mensal_com_cenario(
         real_f, cr_f, cp_f, ano, saldo_anchor_ano, ultima_real_global,
         proj_df, renov_df if renov_ativa else pd.DataFrame({"entradas": pd.Series(0.0, index=range(1,13)),
