@@ -1331,7 +1331,7 @@ def _ranking_clientes_cr(cr_f: pd.DataFrame, ano: int, mes: int, top_n: int = 5)
         .reset_index(drop=True)
     )
 
-    total_cr = ranking["Valor"].sum()
+    total_cr = cr_periodo["_valor"].sum()
     ranking["% do CR"] = (ranking["Valor"] / total_cr * 100) if total_cr > 0 else 0.0
 
     return ranking
