@@ -2002,6 +2002,205 @@ def pagina_receita(data: dict, ano: int, mes: int, centros_sel: list[str], centr
         )
 
 
+# ─── DRE ───────────────────────────────────────────────────────────────────────
+def _explode_e_mapear_dre(df: pd.DataFrame, dim_cat: pd.DataFrame, valor_col: str = "total") -> pd.DataFrame:
+    """Explode categorias JSON e junta com dim_categoria para mapeamento DRE."""
+    if df.empty:
+        return pd.DataFrame(columns=["valor", "dre_grupo", "entrada_dre"])
+    cat_map = dim_cat.set_index("id")[["dre_grupo", "entrada_dre"]].to_dict("index")
+    rows = []
+    for _, row in df.iterrows():
+        valor = pd.to_numeric(row.get(valor_col), errors="coerce")
+        if pd.isna(valor):
+            valor = 0.0
+        cats = row.get("categorias") or []
+        cats = [c for c in cats if isinstance(c, dict) and c.get("id")]
+        if cats:
+            v_por_cat = valor / len(cats)
+            for c in cats:
+                mapping = cat_map.get(c["id"], {})
+                rows.append({
+                    "valor": v_por_cat,
+                    "dre_grupo": mapping.get("dre_grupo"),
+                    "entrada_dre": mapping.get("entrada_dre"),
+                })
+        else:
+            rows.append({"valor": valor, "dre_grupo": None, "entrada_dre": None})
+    return pd.DataFrame(rows) if rows else pd.DataFrame(columns=["valor", "dre_grupo", "entrada_dre"])
+
+
+def calc_dre(data: dict, ano: int, centros_sel: list[str], cats_sel: list[str]) -> dict:
+    """Calcula o DRE anual (base competência) e as métricas da Regra dos 40."""
+    cr = _filtrar_categoria(_filtrar_centro(data["cr"].copy(), centros_sel), cats_sel)
+    cp = _filtrar_categoria(_filtrar_centro(data["cp"].copy(), centros_sel), cats_sel)
+    dim_cat = data["categorias"]
+
+    cr_ano = cr[cr["data_competencia"].dt.year == ano]
+    cp_ano = cp[cp["data_competencia"].dt.year == ano]
+
+    cr_dre = _explode_e_mapear_dre(cr_ano, dim_cat)
+    cp_dre = _explode_e_mapear_dre(cp_ano, dim_cat)
+
+    def _s(df: pd.DataFrame, grupo: str) -> float:
+        if df.empty:
+            return 0.0
+        return float(df.loc[df["dre_grupo"] == grupo, "valor"].sum())
+
+    receita_bruta         = _s(cr_dre, "Receitas Operacionais")
+    deducoes              = _s(cp_dre, "Deduções da Receita Bruta")
+    receita_liquida       = receita_bruta - deducoes
+    custos_operacionais   = _s(cp_dre, "Custos Operacionais")
+    lucro_bruto           = receita_liquida - custos_operacionais
+    despesas_operacionais = _s(cp_dre, "Despesas Operacionais")
+    ebitda                = lucro_bruto - despesas_operacionais
+    resultado_financeiro  = (_s(cr_dre, "Receitas e Despesas Financeiras") -
+                             _s(cp_dre, "Receitas e Despesas Financeiras"))
+    outras_nao_oper       = (_s(cr_dre, "Outras Receitas e Despesas Não Operacionais") -
+                             _s(cp_dre, "Outras Receitas e Despesas Não Operacionais"))
+    lucro_liquido         = ebitda + resultado_financeiro + outras_nao_oper
+
+    vnd = data["vendas"].copy()
+    vnd["data"] = pd.to_datetime(vnd["data"], errors="coerce")
+    mrr_atual    = vnd[vnd["data"].dt.year == ano]["total"].sum()
+    mrr_anterior = vnd[vnd["data"].dt.year == (ano - 1)]["total"].sum()
+    crescimento_mrr = ((mrr_atual / mrr_anterior) - 1) * 100 if mrr_anterior > 0 else None
+    margem_ebitda   = (ebitda / receita_bruta * 100) if receita_bruta > 0 else 0.0
+    score_r40       = (crescimento_mrr + margem_ebitda) if crescimento_mrr is not None else None
+
+    return dict(
+        receita_bruta=receita_bruta,
+        deducoes=deducoes,
+        receita_liquida=receita_liquida,
+        custos_operacionais=custos_operacionais,
+        lucro_bruto=lucro_bruto,
+        despesas_operacionais=despesas_operacionais,
+        ebitda=ebitda,
+        resultado_financeiro=resultado_financeiro,
+        outras_nao_oper=outras_nao_oper,
+        lucro_liquido=lucro_liquido,
+        crescimento_mrr=crescimento_mrr,
+        margem_ebitda=margem_ebitda,
+        score_r40=score_r40,
+    )
+
+
+def _dre_fmt_brl(v: float) -> str:
+    return f"R$ {abs(v):,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _dre_pct(v: float, base: float) -> str:
+    return f"{v / base * 100:.1f}%" if base else "—"
+
+
+def _dre_row(label: str, valor: float, base: float, kind: str = "item") -> str:
+    brl = _dre_fmt_brl(valor)
+    pct = _dre_pct(valor, base)
+    if kind == "subtotal":
+        cor = GREEN if valor >= 0 else RED
+        return (
+            f"<tr style='background:#f5f5f7;border-top:1px solid {BORDER};border-bottom:1px solid {BORDER};'>"
+            f"<td style='font-weight:700;padding:10px 14px;color:{TEXT_PRIMARY};'>{label}</td>"
+            f"<td style='font-weight:700;text-align:right;padding:10px 14px;color:{cor};white-space:nowrap;'>{brl}</td>"
+            f"<td style='font-weight:700;text-align:right;padding:10px 14px;color:{TEXT_SECONDARY};'>{pct}</td>"
+            f"</tr>"
+        )
+    else:
+        return (
+            f"<tr>"
+            f"<td style='padding:8px 14px 8px 28px;color:{TEXT_SECONDARY};'>{label}</td>"
+            f"<td style='text-align:right;padding:8px 14px;color:{TEXT_PRIMARY};white-space:nowrap;'>{brl}</td>"
+            f"<td style='text-align:right;padding:8px 14px;color:{TEXT_SECONDARY};'>{pct}</td>"
+            f"</tr>"
+        )
+
+
+def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_label: str,
+               cats_sel: list[str], cat_label: str) -> None:
+    _page_header("DRE", f"Demonstrativo de Resultado do Exercicio — {ano}", ano, mes, centro_label, cat_label)
+
+    d  = calc_dre(data, ano, centros_sel, cats_sel)
+    rb = d["receita_bruta"] if d["receita_bruta"] else 1.0
+
+    # ── Card Regra dos 40 ─────────────────────────────────────────────────────
+    cresc_str = f"{d['crescimento_mrr']:+.1f}%" if d["crescimento_mrr"] is not None else "N/D"
+    marg_str  = f"{d['margem_ebitda']:+.1f}%"
+    if d["score_r40"] is not None:
+        sv         = d["score_r40"]
+        score_str  = f"{sv:.0f}%"
+        score_cor  = GREEN if sv >= 40 else RED
+        status_str = "&#10003; Acima de 40%" if sv >= 40 else "&#10005; Abaixo de 40%"
+    else:
+        score_str  = "N/D"
+        score_cor  = TEXT_SECONDARY
+        status_str = "Sem dados do ano anterior"
+
+    col1, _col2 = st.columns([1, 1])
+    with col1:
+        st.markdown(f"""
+        <div class="kpi-card" style="padding:22px;">
+            <div class="kpi-label" style="margin-bottom:16px;font-size:0.75rem;">
+                Regra dos 40 &mdash; {ano} vs {ano - 1}
+            </div>
+            <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;">
+                <div>
+                    <div style="font-size:0.65rem;color:{TEXT_SECONDARY};text-transform:uppercase;
+                                letter-spacing:0.07em;margin-bottom:4px;">Crescimento MRR</div>
+                    <div style="font-size:1.4rem;font-weight:700;color:{TEXT_PRIMARY};">{cresc_str}</div>
+                </div>
+                <div style="font-size:1.6rem;color:{BORDER};font-weight:300;">+</div>
+                <div>
+                    <div style="font-size:0.65rem;color:{TEXT_SECONDARY};text-transform:uppercase;
+                                letter-spacing:0.07em;margin-bottom:4px;">Margem EBITDA</div>
+                    <div style="font-size:1.4rem;font-weight:700;color:{TEXT_PRIMARY};">{marg_str}</div>
+                </div>
+                <div style="font-size:1.6rem;color:{BORDER};font-weight:300;">=</div>
+                <div>
+                    <div style="font-size:0.65rem;color:{TEXT_SECONDARY};text-transform:uppercase;
+                                letter-spacing:0.07em;margin-bottom:4px;">Score</div>
+                    <div style="font-size:2.2rem;font-weight:800;color:{score_cor};
+                                line-height:1;">{score_str}</div>
+                    <div style="font-size:0.65rem;color:{score_cor};margin-top:4px;">{status_str}</div>
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Tabela DRE ────────────────────────────────────────────────────────────
+    st.markdown(
+        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"letter-spacing:0.08em;font-weight:600;margin:18px 0 8px 0;'>"
+        f"Demonstrativo de Resultado — {ano} (base competencia)</div>",
+        unsafe_allow_html=True,
+    )
+
+    linhas = [
+        _dre_row("RECEITA BRUTA", d["receita_bruta"], rb, "subtotal"),
+        _dre_row("(&ndash;) Deduções da Receita Bruta", d["deducoes"], rb),
+        _dre_row("= RECEITA LÍQUIDA", d["receita_liquida"], rb, "subtotal"),
+        _dre_row("(&ndash;) Custos Operacionais (CSP)", d["custos_operacionais"], rb),
+        _dre_row("= LUCRO BRUTO", d["lucro_bruto"], rb, "subtotal"),
+        _dre_row("(&ndash;) Despesas Operacionais", d["despesas_operacionais"], rb),
+        _dre_row("= EBITDA", d["ebitda"], rb, "subtotal"),
+        _dre_row("(&plusmn;) Resultado Financeiro", d["resultado_financeiro"], rb),
+        _dre_row("(&plusmn;) Outras Receitas / Despesas", d["outras_nao_oper"], rb),
+        _dre_row("= LUCRO LÍQUIDO", d["lucro_liquido"], rb, "subtotal"),
+    ]
+
+    st.markdown(f"""
+    <table style='width:100%;border-collapse:collapse;font-size:0.875rem;
+                  border:1px solid {BORDER};border-radius:8px;overflow:hidden;'>
+        <thead>
+            <tr style='background:{BLUE};color:#fff;'>
+                <th style='text-align:left;padding:10px 14px;font-weight:600;'>Linha</th>
+                <th style='text-align:right;padding:10px 14px;font-weight:600;'>Valor</th>
+                <th style='text-align:right;padding:10px 14px;font-weight:600;'>% Receita Bruta</th>
+            </tr>
+        </thead>
+        <tbody>{"".join(linhas)}</tbody>
+    </table>""", unsafe_allow_html=True)
+
+
 # ─── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
     _run_auth()
@@ -2038,6 +2237,7 @@ def main() -> None:
             "Resumo de Caixa":       "resumo",
             "Cenarios de Caixa":     "cenarios",
             "Receita e Eficiencia":  "receita",
+            "DRE":                   "dre",
         }
         pagina_label = st.radio("nav", list(paginas.keys()), label_visibility="collapsed")
         pagina = paginas[pagina_label]
@@ -2154,6 +2354,8 @@ def main() -> None:
         pagina_cenarios(**kwargs)
     elif pagina == "receita":
         pagina_receita(**kwargs)
+    elif pagina == "dre":
+        pagina_dre(**kwargs)
 
 
 if __name__ == "__main__":
