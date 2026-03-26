@@ -1264,6 +1264,51 @@ def _page_header(titulo: str, subtitulo: str, ano: int, mes: int, centro: str, c
     st.markdown(filter_bar_html(ano, mes, centro, categoria), unsafe_allow_html=True)
 
 
+def _ranking_categorias_despesas(
+    cp_f: pd.DataFrame, cr_f: pd.DataFrame, ano: int, mes: int, top_n: int = 10
+) -> pd.DataFrame:
+    """Ranking das maiores categorias de despesas no período, por data de vencimento."""
+    cp_periodo = cp_f[
+        (cp_f["data_vencimento"].dt.year == ano) & (cp_f["data_vencimento"].dt.month == mes)
+    ]
+    cr_periodo = cr_f[
+        (cr_f["data_vencimento"].dt.year == ano) & (cr_f["data_vencimento"].dt.month == mes)
+    ]
+
+    receita_total = pd.to_numeric(cr_periodo["valor_documento"], errors="coerce").fillna(0).sum()
+
+    rows = []
+    for _, row in cp_periodo.iterrows():
+        valor = pd.to_numeric(row.get("valor_documento"), errors="coerce")
+        if pd.isna(valor):
+            valor = 0.0
+        cats = row.get("categorias") or []
+        cats = [c for c in cats if isinstance(c, dict) and c.get("nome")]
+        if cats:
+            v_por_cat = valor / len(cats)
+            for c in cats:
+                rows.append({"Categoria": c["nome"], "Valor": v_por_cat})
+        else:
+            rows.append({"Categoria": "(Sem categoria)", "Valor": valor})
+
+    if not rows:
+        return pd.DataFrame()
+
+    ranking = (
+        pd.DataFrame(rows)
+        .groupby("Categoria", as_index=False)["Valor"].sum()
+        .sort_values("Valor", ascending=False)
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+
+    total_despesas = ranking["Valor"].sum()
+    ranking["% Despesa"] = ranking["Valor"] / total_despesas if total_despesas > 0 else 0.0
+    ranking["% Receita"] = ranking["Valor"] / receita_total if receita_total > 0 else 0.0
+
+    return ranking
+
+
 def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro_label: str,
                   cats_sel: list[str], cat_label: str) -> None:
     _page_header("Resumo de Caixa", "Visao executiva do caixa", ano, mes, centro_label, cat_label)
@@ -1336,6 +1381,35 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
         ultima_real=ultima_real_global,
     )
     render_chart(fig_fluxo_mensal(serie_anual, ano, f"Fluxo de Caixa — Anual {ano}"))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"letter-spacing:0.08em;font-weight:600;margin:18px 0 6px 0;'>"
+        f"Ranking de Categorias de Despesas — Top 10 | {MESES_PT[mes]} {ano}</div>",
+        unsafe_allow_html=True,
+    )
+    ranking_df = _ranking_categorias_despesas(cp_f, cr_f, ano, mes)
+    if ranking_df.empty:
+        st.info("Nenhuma despesa com vencimento no período selecionado.")
+    else:
+        st.dataframe(
+            ranking_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Categoria": st.column_config.TextColumn("Categoria", width="medium"),
+                "Valor": st.column_config.NumberColumn(
+                    "Valor Nominal", format="R$ %.2f", width="small"
+                ),
+                "% Despesa": st.column_config.ProgressColumn(
+                    "% da Despesa Total", format="%.1f%%", min_value=0, max_value=1
+                ),
+                "% Receita": st.column_config.ProgressColumn(
+                    "% da Receita do Período", format="%.1f%%", min_value=0, max_value=1
+                ),
+            },
+        )
 
 
 def _projecoes_serie_mensal(projecoes: list, ano: int) -> pd.DataFrame:
