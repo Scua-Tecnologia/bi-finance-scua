@@ -1275,11 +1275,11 @@ def _ranking_categorias_despesas(
         (cr_f["data_vencimento"].dt.year == ano) & (cr_f["data_vencimento"].dt.month == mes)
     ]
 
-    receita_total = pd.to_numeric(cr_periodo["valor_documento"], errors="coerce").fillna(0).sum()
+    receita_total = pd.to_numeric(cr_periodo["total"], errors="coerce").fillna(0).sum()
 
     rows = []
     for _, row in cp_periodo.iterrows():
-        valor = pd.to_numeric(row.get("valor_documento"), errors="coerce")
+        valor = pd.to_numeric(row.get("total"), errors="coerce")
         if pd.isna(valor):
             valor = 0.0
         cats = row.get("categorias") or []
