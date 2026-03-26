@@ -1309,6 +1309,34 @@ def _ranking_categorias_despesas(
     return ranking
 
 
+def _ranking_clientes_cr(cr_f: pd.DataFrame, ano: int, mes: int, top_n: int = 5) -> pd.DataFrame:
+    """Ranking dos maiores clientes por CR no período, por data de vencimento."""
+    cr_periodo = cr_f[
+        (cr_f["data_vencimento"].dt.year == ano) & (cr_f["data_vencimento"].dt.month == mes)
+    ].copy()
+
+    if cr_periodo.empty:
+        return pd.DataFrame()
+
+    cr_periodo["_cliente"] = cr_periodo.apply(
+        lambda r: r.get("cliente.nome") or r.get("cliente.id") or "(Sem cliente)", axis=1
+    )
+    cr_periodo["_valor"] = pd.to_numeric(cr_periodo["total"], errors="coerce").fillna(0)
+
+    ranking = (
+        cr_periodo.groupby("_cliente", as_index=False)["_valor"].sum()
+        .rename(columns={"_cliente": "Cliente", "_valor": "Valor"})
+        .sort_values("Valor", ascending=False)
+        .head(top_n)
+        .reset_index(drop=True)
+    )
+
+    total_cr = ranking["Valor"].sum()
+    ranking["% do CR"] = (ranking["Valor"] / total_cr * 100) if total_cr > 0 else 0.0
+
+    return ranking
+
+
 def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro_label: str,
                   cats_sel: list[str], cat_label: str) -> None:
     _page_header("Resumo de Caixa", "Visao executiva do caixa", ano, mes, centro_label, cat_label)
@@ -1943,6 +1971,35 @@ def pagina_receita(data: dict, ano: int, mes: int, centros_sel: list[str], centr
 
     st.markdown("<br>", unsafe_allow_html=True)
     render_chart(fig_mrr(r["mrr_serie"], ano))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"letter-spacing:0.08em;font-weight:600;margin:18px 0 6px 0;'>"
+        f"Top 5 Maiores Clientes — CR | {MESES_PT[mes]} {ano}</div>",
+        unsafe_allow_html=True,
+    )
+    cr_f = _filtrar_categoria(_filtrar_centro(data["cr"].copy(), centros_sel), cats_sel)
+    ranking_cli = _ranking_clientes_cr(cr_f, ano, mes)
+    if ranking_cli.empty:
+        st.info("Nenhuma receita a receber com vencimento no período selecionado.")
+    else:
+        display_cli = ranking_cli.copy()
+        display_cli["Valor"] = display_cli["Valor"].apply(
+            lambda v: f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        )
+        st.dataframe(
+            display_cli,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "Cliente": st.column_config.TextColumn("Cliente", width="medium"),
+                "Valor": st.column_config.TextColumn("Valor Nominal", width="small"),
+                "% do CR": st.column_config.ProgressColumn(
+                    "% do CR do Período", format="%.1f%%", min_value=0, max_value=100
+                ),
+            },
+        )
 
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
