@@ -2172,6 +2172,22 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
             </div>
         </div>""", unsafe_allow_html=True)
 
+    with _col2:
+        despesa_nao_oper = d["resultado_financeiro"] + d["outras_nao_oper"]
+        for _label, _valor in [
+            ("Despesas Operacionais",     d["despesas_operacionais"]),
+            ("Despesas Nao-Operacionais", despesa_nao_oper),
+        ]:
+            _cor = "negativo" if _valor > 0 else "positivo"
+            st.markdown(f"""
+            <div class="kpi-card" style="margin-bottom:12px;">
+                <div class="kpi-label">{_label}</div>
+                <div class="kpi-value {_cor}">{_dre_fmt_brl(_valor)}</div>
+                <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
+                    {_dre_pct(_valor, rb)} da Receita Bruta
+                </div>
+            </div>""", unsafe_allow_html=True)
+
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Tabela DRE ────────────────────────────────────────────────────────────
