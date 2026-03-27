@@ -877,6 +877,9 @@ def calc_receita(data: dict, ano: int, mes: int, centros_sel: list[str], cats_se
     vnd_mes = vnd[(vnd.data.dt.year == ano) & (vnd.data.dt.month == mes)]
     mrr     = vnd_mes["total"].sum()
 
+    n_clientes   = int(vnd_mes["cliente.nome"].dropna().nunique()) if not vnd_mes.empty else 0
+    ticket_medio = mrr / n_clientes if n_clientes > 0 else 0.0
+
     cr_comp        = cr[(cr.data_competencia.dt.year == ano) & (cr.data_competencia.dt.month == mes)]
     nao_recorrente = max(cr_comp["total"].sum() - mrr, 0)
 
@@ -884,7 +887,8 @@ def calc_receita(data: dict, ano: int, mes: int, centros_sel: list[str], cats_se
     vnd_ano["mes"] = vnd_ano.data.dt.month
     mrr_serie     = vnd_ano.groupby("mes")["total"].sum().reindex(range(1, 13), fill_value=0)
 
-    return dict(mrr=mrr, arr=mrr * 12, nao_recorrente=nao_recorrente, mrr_serie=mrr_serie)
+    return dict(mrr=mrr, arr=mrr * 12, nao_recorrente=nao_recorrente, mrr_serie=mrr_serie,
+                n_clientes=n_clientes, ticket_medio=ticket_medio)
 
 
 # ─── Graficos ─────────────────────────────────────────────────────────────────
@@ -1968,6 +1972,10 @@ def pagina_receita(data: dict, ano: int, mes: int, centros_sel: list[str], centr
     c1.markdown(kpi_card("MRR — Receita Recorrente Mensal", r["mrr"],           cor="positivo"), unsafe_allow_html=True)
     c2.markdown(kpi_card("ARR — Receita Recorrente Anual",  r["arr"],           cor="positivo"), unsafe_allow_html=True)
     c3.markdown(kpi_card("Receita Nao Recorrente",          r["nao_recorrente"]),                unsafe_allow_html=True)
+
+    r1, r2, _ = st.columns(3)
+    r1.markdown(kpi_card("Ticket Medio por Cliente", r["ticket_medio"],          cor="positivo"), unsafe_allow_html=True)
+    r2.markdown(kpi_card("Clientes Ativos no Mes",   str(r["n_clientes"]), prefix="", cor="neutro"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     render_chart(fig_mrr(r["mrr_serie"], ano))
