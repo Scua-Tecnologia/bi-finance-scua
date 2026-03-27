@@ -815,7 +815,22 @@ def calc_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], cats_sel
                     & (cp.status_normalizado != "ACQUITTED")]["nao_pago"].sum()
 
     # Despesas Realizadas: liquidado dentro do mes/ano (filtrado)
-    des_realizado = r_mes_real[r_mes_real.tipo_evento_origem == "DESPESA"]["valor_composicao.valor_liquido"].sum()
+    _real_desp_mes = r_mes_real[r_mes_real.tipo_evento_origem == "DESPESA"]
+    des_realizado  = _real_desp_mes["valor_composicao.valor_liquido"].sum()
+
+    # Breakdown de despesas realizadas por grupo DRE (base caixa)
+    if not _real_desp_mes.empty and "categoria_nome" in _real_desp_mes.columns:
+        _nome_dre  = data["categorias"].set_index("nome")["dre_grupo"].to_dict()
+        _desp_map  = _real_desp_mes.copy()
+        _desp_map["_dre"] = _desp_map["categoria_nome"].map(_nome_dre)
+        _dre_val   = _desp_map.groupby("_dre")["valor_composicao.valor_liquido"].sum()
+        desp_oper_real     = float(_dre_val.get("Despesas Operacionais", 0.0))
+        desp_nao_oper_real = float(
+            _dre_val.get("Receitas e Despesas Financeiras", 0.0) +
+            _dre_val.get("Outras Receitas e Despesas Não Operacionais", 0.0)
+        )
+    else:
+        desp_oper_real = desp_nao_oper_real = 0.0
 
     # CP Vencidas: vencimento < hoje, nao liquidado — NUNCA filtrado
     cp_raw = data["cp"]
@@ -830,6 +845,7 @@ def calc_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], cats_sel
         liquido=entradas - saidas, runway=runway, funding_date=funding_date,
         rec_aberto=rec_aberto, rec_realizado=rec_realizado, cr_vencidas=cr_vencidas,
         des_aberto=des_aberto, des_realizado=des_realizado, cp_vencidas=cp_vencidas,
+        desp_oper_real=desp_oper_real, desp_nao_oper_real=desp_nao_oper_real,
     )
 
 
@@ -1382,6 +1398,27 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
     d1.markdown(kpi_card("Despesas em Aberto",    m["des_aberto"],   cor="negativo"), unsafe_allow_html=True)
     d2.markdown(kpi_card("Despesas Realizadas",   m["des_realizado"], cor="negativo"), unsafe_allow_html=True)
     d3.markdown(kpi_card("Contas a Pagar Vencidas", m["cp_vencidas"], cor="negativo"), unsafe_allow_html=True)
+
+    # ── Linha 3b: Estrutura das despesas realizadas (base caixa) ──────────────
+    st.markdown(
+        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"letter-spacing:0.08em;font-weight:600;margin:10px 0 6px 0;'>"
+        f"Estrutura de Despesas Realizadas — Caixa | {MESES_PT[mes]} {ano}</div>",
+        unsafe_allow_html=True,
+    )
+    e1, e2, _ = st.columns(3)
+    _rec_base = m["rec_realizado"] if m["rec_realizado"] else None
+    for _ecol, _elabel, _ev in [
+        (e1, "Desp. Operacional (Caixa)",     m["desp_oper_real"]),
+        (e2, "Desp. Nao-Operacional (Caixa)", m["desp_nao_oper_real"]),
+    ]:
+        _ecol.markdown(kpi_card(_elabel, _ev, cor="negativo"), unsafe_allow_html=True)
+        _pct_txt = f"{_ev / _rec_base * 100:.1f}% da Rec. Realizada" if _rec_base else "—"
+        _ecol.markdown(
+            f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};margin-top:-6px;"
+            f"padding:0 4px;'>{_pct_txt}</div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2142,10 +2179,23 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
         score_cor  = TEXT_SECONDARY
         status_str = "Sem dados do ano anterior"
 
+    st.markdown("""<style>
+    [data-testid="stHorizontalBlock"]:has(.dre-regra40) {
+        align-items: stretch !important;
+    }
+    [data-testid="stHorizontalBlock"]:has(.dre-regra40) [data-testid="column"] {
+        display: flex;
+        flex-direction: column;
+    }
+    [data-testid="stHorizontalBlock"]:has(.dre-regra40) [data-testid="column"] > * {
+        flex: 1;
+    }
+    </style>""", unsafe_allow_html=True)
+
     col1, _col2 = st.columns([1, 1])
     with col1:
         st.markdown(f"""
-        <div class="kpi-card" style="padding:22px;">
+        <div class="kpi-card dre-regra40" style="padding:22px;height:100%;box-sizing:border-box;">
             <div class="kpi-label" style="margin-bottom:16px;font-size:0.75rem;">
                 Regra dos 40 &mdash; {ano} vs {ano - 1}
             </div>
@@ -2174,19 +2224,24 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
 
     with _col2:
         despesa_nao_oper = d["resultado_financeiro"] + d["outras_nao_oper"]
+        _cards_html = ""
         for _label, _valor in [
             ("Despesas Operacionais",     d["despesas_operacionais"]),
             ("Despesas Nao-Operacionais", despesa_nao_oper),
         ]:
             _cor = "negativo" if _valor > 0 else "positivo"
-            st.markdown(f"""
-            <div class="kpi-card" style="margin-bottom:12px;">
+            _cards_html += f"""
+            <div class="kpi-card" style="margin:0;">
                 <div class="kpi-label">{_label}</div>
                 <div class="kpi-value {_cor}">{_dre_fmt_brl(_valor)}</div>
                 <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
                     {_dre_pct(_valor, rb)} da Receita Bruta
                 </div>
-            </div>""", unsafe_allow_html=True)
+            </div>"""
+        st.markdown(
+            f'<div style="display:flex;flex-direction:column;height:100%;gap:12px;">{_cards_html}</div>',
+            unsafe_allow_html=True,
+        )
 
     st.markdown("<br>", unsafe_allow_html=True)
 
