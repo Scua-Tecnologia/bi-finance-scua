@@ -2937,7 +2937,7 @@ def main() -> None:
         else:
             st.markdown(
                 f"<div style='font-size:2.2rem;font-weight:800;color:{P['TEXT_PRIMARY']};"
-                "letter-spacing:-0.03em;padding:8px 0 0 0;'>Scua</div>",
+                "letter-spacing:-0.03em;margin:0;padding:0;'>Scua</div>",
                 unsafe_allow_html=True,
             )
         st.markdown(
