@@ -818,17 +818,18 @@ def calc_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], cats_sel
     _real_desp_mes = r_mes_real[r_mes_real.tipo_evento_origem == "DESPESA"]
     des_realizado  = _real_desp_mes["valor_composicao.valor_liquido"].sum()
 
-    # Breakdown de despesas realizadas por grupo DRE (base caixa)
-    if not _real_desp_mes.empty and "categoria_nome" in _real_desp_mes.columns:
-        _nome_dre  = data["categorias"].set_index("nome")["dre_grupo"].to_dict()
-        _desp_map  = _real_desp_mes.copy()
-        _desp_map["_dre"] = _desp_map["categoria_nome"].map(_nome_dre)
-        _dre_val   = _desp_map.groupby("_dre")["valor_composicao.valor_liquido"].sum()
-        desp_oper_real     = float(_dre_val.get("Despesas Operacionais", 0.0))
-        desp_nao_oper_real = float(
-            _dre_val.get("Receitas e Despesas Financeiras", 0.0) +
-            _dre_val.get("Outras Receitas e Despesas Não Operacionais", 0.0)
+    # Breakdown de CP por vencimento e grupo DRE (operacional amplo vs nao-operacional)
+    cp_mes = cp[(cp.data_vencimento.dt.year == ano) & (cp.data_vencimento.dt.month == mes)]
+    if not cp_mes.empty:
+        _cp_dre = _explode_e_mapear_dre(cp_mes, data["categorias"])
+        def _s_cp(grupo: str) -> float:
+            return float(_cp_dre.loc[_cp_dre["dre_grupo"] == grupo, "valor"].sum())
+        desp_oper_real = (
+            _s_cp("Custos Operacionais") +
+            _s_cp("Despesas Operacionais") +
+            _s_cp("Deduções da Receita Bruta")
         )
+        desp_nao_oper_real = float(_cp_dre["valor"].sum()) - desp_oper_real
     else:
         desp_oper_real = desp_nao_oper_real = 0.0
 
@@ -1403,14 +1404,14 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
     st.markdown(
         f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:10px 0 6px 0;'>"
-        f"Estrutura de Despesas Realizadas — Caixa | {MESES_PT[mes]} {ano}</div>",
+        f"Estrutura de Despesas Previstas — Vencimento | {MESES_PT[mes]} {ano}</div>",
         unsafe_allow_html=True,
     )
     e1, e2, _ = st.columns(3)
     _rec_base = m["rec_realizado"] if m["rec_realizado"] else None
     for _ecol, _elabel, _ev in [
-        (e1, "Desp. Operacional (Caixa)",     m["desp_oper_real"]),
-        (e2, "Desp. Nao-Operacional (Caixa)", m["desp_nao_oper_real"]),
+        (e1, "Desp. Operacional (CP)",     m["desp_oper_real"]),
+        (e2, "Desp. Nao-Operacional (CP)", m["desp_nao_oper_real"]),
     ]:
         _ecol.markdown(kpi_card(_elabel, _ev, cor="negativo"), unsafe_allow_html=True)
         _pct_txt = f"{_ev / _rec_base * 100:.1f}% da Rec. Realizada" if _rec_base else "—"
@@ -2179,23 +2180,13 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
         score_cor  = TEXT_SECONDARY
         status_str = "Sem dados do ano anterior"
 
-    st.markdown("""<style>
-    [data-testid="stHorizontalBlock"]:has(.dre-regra40) {
-        align-items: stretch !important;
-    }
-    [data-testid="stHorizontalBlock"]:has(.dre-regra40) [data-testid="column"] {
-        display: flex;
-        flex-direction: column;
-    }
-    [data-testid="stHorizontalBlock"]:has(.dre-regra40) [data-testid="column"] > * {
-        flex: 1;
-    }
-    </style>""", unsafe_allow_html=True)
+    despesa_nao_oper = d["resultado_financeiro"] + d["outras_nao_oper"]
+    _cor_oper = "negativo" if d["despesas_operacionais"] > 0 else "positivo"
+    _cor_nao  = "negativo" if despesa_nao_oper > 0 else "positivo"
 
-    col1, _col2 = st.columns([1, 1])
-    with col1:
-        st.markdown(f"""
-        <div class="kpi-card dre-regra40" style="padding:22px;height:100%;box-sizing:border-box;">
+    st.markdown(f"""
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;align-items:stretch;">
+        <div class="kpi-card" style="padding:22px;">
             <div class="kpi-label" style="margin-bottom:16px;font-size:0.75rem;">
                 Regra dos 40 &mdash; {ano} vs {ano - 1}
             </div>
@@ -2220,28 +2211,24 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
                     <div style="font-size:0.65rem;color:{score_cor};margin-top:4px;">{status_str}</div>
                 </div>
             </div>
-        </div>""", unsafe_allow_html=True)
-
-    with _col2:
-        despesa_nao_oper = d["resultado_financeiro"] + d["outras_nao_oper"]
-        _cards_html = ""
-        for _label, _valor in [
-            ("Despesas Operacionais",     d["despesas_operacionais"]),
-            ("Despesas Nao-Operacionais", despesa_nao_oper),
-        ]:
-            _cor = "negativo" if _valor > 0 else "positivo"
-            _cards_html += f"""
-            <div class="kpi-card" style="margin:0;">
-                <div class="kpi-label">{_label}</div>
-                <div class="kpi-value {_cor}">{_dre_fmt_brl(_valor)}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:12px;">
+            <div class="kpi-card" style="flex:1;margin:0;">
+                <div class="kpi-label">Despesas Operacionais</div>
+                <div class="kpi-value {_cor_oper}">{_dre_fmt_brl(d["despesas_operacionais"])}</div>
                 <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
-                    {_dre_pct(_valor, rb)} da Receita Bruta
+                    {_dre_pct(d["despesas_operacionais"], rb)} da Receita Bruta
                 </div>
-            </div>"""
-        st.markdown(
-            f'<div style="display:flex;flex-direction:column;height:100%;gap:12px;">{_cards_html}</div>',
-            unsafe_allow_html=True,
-        )
+            </div>
+            <div class="kpi-card" style="flex:1;margin:0;">
+                <div class="kpi-label">Despesas Nao-Operacionais</div>
+                <div class="kpi-value {_cor_nao}">{_dre_fmt_brl(despesa_nao_oper)}</div>
+                <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
+                    {_dre_pct(despesa_nao_oper, rb)} da Receita Bruta
+                </div>
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
