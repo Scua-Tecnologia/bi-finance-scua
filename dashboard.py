@@ -107,6 +107,9 @@ def _inject_css(P: dict) -> None:
 section[data-testid="stSidebar"] > div:first-child {{
     padding-top: 1.8rem !important;
 }}
+[data-testid="stSidebarUserContent"] {{
+    padding-top: 0 !important;
+}}
 /* Colunas do Streamlit: remove gap padrao excessivo */
 [data-testid="stHorizontalBlock"] {{
     gap: 0.5rem !important;
