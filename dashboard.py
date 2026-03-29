@@ -385,7 +385,7 @@ def _inject_theme_js() -> None:
     }}
 }})();
 </script>
-""", unsafe_allow_html=True)
+""")
 
 
 _PROJECT_ROOT = Path(__file__).parent
