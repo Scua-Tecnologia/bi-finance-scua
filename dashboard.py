@@ -98,9 +98,9 @@ def _inject_css(P: dict) -> None:
     background-color: {P["BG_APP"]} !important;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }}
-/* Padding-top maior para nao sobrepor o header fixo */
+/* Padding-top para nao sobrepor o header fixo */
 .block-container {{
-    padding: 5rem 1.5rem 3rem 1.5rem !important;
+    padding: 3.5rem 1.5rem 3rem 1.5rem !important;
     max-width: 100% !important;
 }}
 /* Colunas do Streamlit: remove gap padrao excessivo */
@@ -274,23 +274,38 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     display: none !important;
 }}
 
-/* Botão de configurações fixado no header */
+/* Botão de configurações fixado no canto superior direito do header */
 [data-testid="stPopoverButton"] {{
     position: fixed !important;
-    top: 0.45rem !important;
-    right: 3.5rem !important;
+    top: 0.55rem !important;
+    right: 0.75rem !important;
     z-index: 999999 !important;
     background: transparent !important;
     border: 1px solid transparent !important;
-    padding: 0.25rem 0.45rem !important;
+    padding: 0.20rem 0.40rem !important;
     border-radius: 8px !important;
     color: {P["TEXT_SECONDARY"]} !important;
+    font-size: 1rem !important;
+    line-height: 1 !important;
+    min-height: 0 !important;
     transition: background 0.15s, border-color 0.15s !important;
 }}
 [data-testid="stPopoverButton"]:hover {{
     background: {P["BG_CARD"]} !important;
     border-color: {P["BORDER"]} !important;
     color: {P["TEXT_PRIMARY"]} !important;
+}}
+/* Esconde o chevron nativo do popover */
+[data-testid="stPopoverButton"] svg {{
+    display: none !important;
+}}
+/* Zera a altura do wrapper do popover no DOM para não empurrar o conteúdo */
+[data-testid="element-container"]:has([data-testid="stPopoverButton"]) {{
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }}
 
 /* Divider */
