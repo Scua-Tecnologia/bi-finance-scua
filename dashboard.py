@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
+import requests as _requests
 import streamlit as st
 from sqlalchemy import create_engine, text
 
@@ -26,20 +27,366 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ─── Paleta ───────────────────────────────────────────────────────────────────
-BG_APP         = "#f5f5f7"
-BG_CARD        = "#ffffff"
-BG_SIDEBAR     = "#ffffff"
-BLUE           = "#004696"
-ORANGE         = "#eb6b06"
-TEXT_PRIMARY   = "#1d1d1f"
-TEXT_SECONDARY = "#6e6e73"
-BORDER         = "#d2d2d7"
-GREEN          = "#1a7f4b"
-GREEN_LIGHT    = "#28a865"
-RED            = "#c0392b"
-RED_LIGHT      = "#e74c3c"
-WHITE          = "#ffffff"
+# ─── Paletas de tema ──────────────────────────────────────────────────────────
+_PALETTE_LIGHT: dict = dict(
+    BG_APP="#f5f5f7", BG_CARD="#ffffff", BG_SIDEBAR="#ffffff",
+    BLUE="#004696", ORANGE="#eb6b06",
+    TEXT_PRIMARY="#1d1d1f", TEXT_SECONDARY="#6e6e73",
+    BORDER="#d2d2d7",
+    GREEN="#1a7f4b", GREEN_LIGHT="#28a865",
+    RED="#c0392b", RED_LIGHT="#e74c3c",
+    WHITE="#ffffff",
+    HEADER_BG="rgba(245,245,247,0.95)",
+    GRID_COLOR="#ebebeb",
+    WARN_BG="#fff8f0", WARN_BORDER="#fcd3a8",
+)
+
+_PALETTE_DARK: dict = dict(
+    BG_APP="#1c1c1e", BG_CARD="#2c2c2e", BG_SIDEBAR="#1c1c1e",
+    BLUE="#4c8ef7", ORANGE="#f0913a",
+    TEXT_PRIMARY="#f5f5f7", TEXT_SECONDARY="#aeaeb2",
+    BORDER="#48484a",
+    GREEN="#30d158", GREEN_LIGHT="#34c759",
+    RED="#ff453a", RED_LIGHT="#ff6961",
+    WHITE="#ffffff",
+    HEADER_BG="rgba(28,28,30,0.95)",
+    GRID_COLOR="#3a3a3c",
+    WARN_BG="#2d1f0e", WARN_BORDER="#7a3e12",
+)
+
+def _P() -> dict:
+    """Shortcut: retorna o palette ativo a partir do session_state."""
+    return st.session_state.get("_active_palette", _PALETTE_LIGHT)
+
+
+def _get_palette() -> dict:
+    """Retorna o palette efetivo com base na preferência de tema do usuário."""
+    pref = st.session_state.get("_theme_pref", "sistema")
+    if pref == "escuro":
+        return _PALETTE_DARK
+    if pref == "claro":
+        return _PALETTE_LIGHT
+    # "sistema": tenta detectar via cookie escrito pelo JS (prefers-color-scheme)
+    try:
+        dark_cookie = st.context.cookies.get("app_dark_scheme", "0")
+    except Exception:
+        dark_cookie = "0"
+    return _PALETTE_DARK if dark_cookie == "1" else _PALETTE_LIGHT
+
+
+def _restore_theme_from_cookie() -> None:
+    """Lê a preferência de tema do cookie do browser e inicializa session_state."""
+    if "_theme_pref" in st.session_state:
+        return
+    try:
+        pref = st.context.cookies.get("app_theme_pref", "sistema")
+    except Exception:
+        pref = "sistema"
+    if pref in ("sistema", "claro", "escuro"):
+        st.session_state["_theme_pref"] = pref
+
+
+def _inject_css(P: dict) -> None:
+    """Injeta o CSS do app com as cores do palette P."""
+    st.markdown(f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+* {{ box-sizing: border-box; }}
+
+.stApp {{
+    background-color: {P["BG_APP"]} !important;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}}
+/* Padding-top maior para nao sobrepor o header fixo */
+.block-container {{
+    padding: 5rem 1.5rem 3rem 1.5rem !important;
+    max-width: 100% !important;
+}}
+/* Colunas do Streamlit: remove gap padrao excessivo */
+[data-testid="stHorizontalBlock"] {{
+    gap: 0.5rem !important;
+}}
+header[data-testid="stHeader"] {{
+    background-color: {P["HEADER_BG"]} !important;
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid {P["BORDER"]} !important;
+}}
+section[data-testid="stSidebar"] {{
+    background-color: {P["BG_SIDEBAR"]} !important;
+    border-right: 1px solid {P["BORDER"]} !important;
+    font-family: 'Inter', -apple-system, sans-serif;
+}}
+/* NAO usar * no sidebar — quebra o font de icones do Streamlit */
+section[data-testid="stSidebar"] p,
+section[data-testid="stSidebar"] span:not([data-testid]),
+section[data-testid="stSidebar"] div[class*="label"],
+section[data-testid="stSidebar"] label {{
+    color: {P["TEXT_PRIMARY"]};
+    font-family: 'Inter', -apple-system, sans-serif;
+}}
+section[data-testid="stSidebar"] .stRadio > div {{
+    gap: 2px;
+}}
+section[data-testid="stSidebar"] .stRadio label {{
+    color: {P["TEXT_SECONDARY"]} !important;
+    font-size: 0.875rem !important;
+    font-weight: 500;
+    padding: 8px 10px !important;
+    border-radius: 8px;
+    transition: background 0.15s;
+}}
+section[data-testid="stSidebar"] .stSelectbox > div > div {{
+    background-color: {P["BG_APP"]} !important;
+    border: 1px solid {P["BORDER"]} !important;
+    border-radius: 8px !important;
+    color: {P["TEXT_PRIMARY"]} !important;
+    font-size: 0.875rem;
+}}
+section[data-testid="stSidebar"] .stSelectbox label {{
+    color: {P["TEXT_SECONDARY"]} !important;
+    font-size: 0.72rem !important;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}}
+section[data-testid="stSidebar"] .stSelectbox svg {{
+    fill: {P["TEXT_SECONDARY"]} !important;
+}}
+
+/* Cards KPI — container queries para escalar com a largura real do card */
+.kpi-card {{
+    background: {P["BG_CARD"]};
+    border: 1px solid {P["BORDER"]};
+    border-radius: 16px;
+    padding: 16px 14px 14px 14px;
+    margin-bottom: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+    min-width: 0;
+    overflow: visible;
+    position: relative;
+    /* Declara o card como container para que cqw funcione nos filhos */
+    container-type: inline-size;
+    container-name: kpi;
+}}
+.kpi-card:hover {{
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.10);
+    transform: translateY(-2px);
+}}
+.kpi-label {{
+    /*
+     * cqw = 1% da largura do card (nao do viewport).
+     * Sidebar fechado: card ~225px → 5.5cqw ≈ 12.4px → capped 0.70rem
+     * Sidebar aberto:  card ~175px → 5.5cqw ≈  9.6px → ~0.60rem
+     */
+    font-size: clamp(0.58rem, 5.5cqw, 0.70rem);
+    color: {P["TEXT_SECONDARY"]};
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}}
+.kpi-value {{
+    /*
+     * Sidebar fechado: card ~225px → 10.7cqw ≈ 24px = 1.50rem (maximo)
+     * Sidebar aberto:  card ~175px → 10.7cqw ≈ 18.7px ≈ 1.17rem
+     */
+    font-size: clamp(0.90rem, 10.7cqw, 1.50rem);
+    font-weight: 700;
+    color: {P["TEXT_PRIMARY"]};
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+    overflow-wrap: break-word;
+    word-break: break-word;
+}}
+.kpi-value.positivo {{ color: {P["GREEN"]}; }}
+.kpi-value.negativo {{ color: {P["RED"]}; }}
+.kpi-value.neutro   {{ color: {P["BLUE"]}; }}
+
+/* Barra de filtros */
+.filter-bar {{
+    background: {P["BG_CARD"]};
+    border: 1px solid {P["BORDER"]};
+    border-radius: 12px;
+    padding: 10px 18px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}}
+.filter-bar-label {{
+    font-size: 0.70rem;
+    color: {P["TEXT_SECONDARY"]};
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-right: 6px;
+}}
+.filter-tag {{
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: {P["BG_APP"]};
+    border: 1px solid {P["BORDER"]};
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 0.80rem;
+    font-weight: 500;
+}}
+.filter-tag .label {{ color: {P["TEXT_SECONDARY"]}; font-size: 0.72rem; }}
+.filter-tag .value {{ color: {P["BLUE"]}; font-weight: 600; }}
+
+/* Titulos */
+.page-title {{
+    font-size: 1.60rem;
+    font-weight: 700;
+    color: {P["TEXT_PRIMARY"]};
+    margin: 0 0 2px 0;
+    letter-spacing: -0.02em;
+}}
+.page-subtitle {{
+    font-size: 0.875rem;
+    color: {P["TEXT_SECONDARY"]};
+    margin-bottom: 20px;
+}}
+
+/* Container nativo do Plotly no Streamlit */
+[data-testid="stPlotlyChart"] {{
+    background: {P["BG_CARD"]};
+    border: 1px solid {P["BORDER"]};
+    border-radius: 16px;
+    padding: 8px 12px 4px 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
+    margin-bottom: 12px;
+    overflow: hidden !important;
+}}
+[data-testid="stPlotlyChart"] > div {{
+    overflow: hidden !important;
+}}
+/* Esconde scrollbar de qualquer container interno do Streamlit */
+[data-testid="stPlotlyChart"] ::-webkit-scrollbar {{
+    display: none !important;
+}}
+
+/* Divider */
+.divider {{
+    height: 1px;
+    background: {P["BORDER"]};
+    margin: 14px 0;
+}}
+
+/* Warn box */
+.warn-box {{
+    background: {P["WARN_BG"]};
+    border: 1px solid {P["WARN_BORDER"]};
+    border-left: 3px solid {P["ORANGE"]};
+    border-radius: 10px;
+    padding: 11px 16px;
+    font-size: 0.82rem;
+    color: {P["TEXT_PRIMARY"]};
+    margin-bottom: 16px;
+}}
+
+/* Sidebar estrutura */
+.sidebar-section {{
+    font-size: 0.68rem;
+    color: {P["TEXT_SECONDARY"]};
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    margin: 18px 0 6px 0;
+}}
+.sidebar-subtitle {{
+    font-size: 0.72rem;
+    color: {P["TEXT_SECONDARY"]};
+    margin-bottom: 4px;
+}}
+
+/* Checkboxes compactos na sidebar */
+section[data-testid="stSidebar"] .stCheckbox label p {{
+    font-size: 0.80rem !important;
+    color: {P["TEXT_PRIMARY"]} !important;
+    line-height: 1.3;
+}}
+section[data-testid="stSidebar"] .stCheckbox {{
+    margin-bottom: 0px !important;
+    padding: 1px 0 !important;
+}}
+
+/* Expander de categorias — nao tocar em SVG/icones */
+section[data-testid="stSidebar"] .stExpander {{
+    border: 1px solid {P["BORDER"]} !important;
+    border-radius: 8px !important;
+    background: {P["BG_APP"]} !important;
+}}
+section[data-testid="stSidebar"] .stExpander summary p {{
+    font-size: 0.875rem !important;
+    color: {P["TEXT_PRIMARY"]} !important;
+    font-weight: 500;
+}}
+section[data-testid="stSidebar"] .stTextInput input {{
+    font-size: 0.82rem !important;
+    padding: 6px 10px !important;
+    border-radius: 7px !important;
+    border: 1px solid {P["BORDER"]} !important;
+    background: {P["BG_CARD"]} !important;
+    color: {P["TEXT_PRIMARY"]} !important;
+}}
+.kpi-info {{ position: relative; flex-shrink: 0; margin-left: 4px; }}
+.kpi-info > summary {{
+    list-style: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1.5px solid #a0a0a8; color: #a0a0a8;
+    font-size: 0.58rem; font-weight: 700; font-style: italic;
+    user-select: none; margin-top: 1px;
+    transition: color 0.15s, border-color 0.15s;
+}}
+.kpi-info > summary::-webkit-details-marker {{ display: none; }}
+.kpi-info > summary:hover {{ color: {P["BLUE"]}; border-color: {P["BLUE"]}; }}
+.kpi-info > .kpi-info-box {{ display: none; }}
+.kpi-info[open] > .kpi-info-box {{
+    display: block; position: absolute;
+    right: 0; top: calc(100% + 4px); z-index: 9999;
+    background: {P["BG_CARD"]}; border: 1px solid {P["BORDER"]}; border-radius: 10px;
+    padding: 10px 12px; min-width: 200px; max-width: 260px;
+    font-size: 0.70rem; line-height: 1.55; color: {P["TEXT_PRIMARY"]};
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    white-space: normal; font-weight: 400;
+    text-transform: none; letter-spacing: 0;
+}}
+</style>
+""", unsafe_allow_html=True)
+
+
+def _inject_theme_js() -> None:
+    """Injeta JS para detectar prefers-color-scheme e escrever cookie app_dark_scheme."""
+    pref = st.session_state.get("_theme_pref", "sistema")
+    theme_pref_js = json.dumps(pref)
+    max_age = 365 * 24 * 3600
+    st.html(f"""
+<div style="display:none"></div>
+<script>
+(function() {{
+    const pref = {theme_pref_js};
+    const maxAge = {max_age};
+    // Escreve a preferência de tema no cookie
+    document.cookie = "app_theme_pref=" + pref + "; path=/; max-age=" + maxAge + "; SameSite=Lax";
+    // Para modo 'sistema', detecta prefers-color-scheme e escreve cookie auxiliar
+    if (pref === "sistema") {{
+        const dark = window.matchMedia("(prefers-color-scheme: dark)").matches ? "1" : "0";
+        document.cookie = "app_dark_scheme=" + dark + "; path=/; max-age=86400; SameSite=Lax";
+    }}
+}})();
+</script>
+""", unsafe_allow_html=True)
+
 
 _PROJECT_ROOT = Path(__file__).parent
 LOGO_PATH = _PROJECT_ROOT / "assets" / "logo_scua.png"
@@ -199,283 +546,6 @@ def _parse_remember_cookie(raw_cookie: str | None) -> tuple[str, str] | None:
         return None
     return selector, validator
 
-# ─── CSS ──────────────────────────────────────────────────────────────────────
-st.markdown(f"""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-
-* {{ box-sizing: border-box; }}
-
-.stApp {{
-    background-color: {BG_APP} !important;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-}}
-/* Padding-top maior para nao sobrepor o header fixo */
-.block-container {{
-    padding: 5rem 1.5rem 3rem 1.5rem !important;
-    max-width: 100% !important;
-}}
-/* Colunas do Streamlit: remove gap padrao excessivo */
-[data-testid="stHorizontalBlock"] {{
-    gap: 0.5rem !important;
-}}
-header[data-testid="stHeader"] {{
-    background-color: rgba(245,245,247,0.95) !important;
-    backdrop-filter: blur(12px);
-    border-bottom: 1px solid {BORDER} !important;
-}}
-section[data-testid="stSidebar"] {{
-    background-color: {BG_SIDEBAR} !important;
-    border-right: 1px solid {BORDER} !important;
-    font-family: 'Inter', -apple-system, sans-serif;
-}}
-/* NAO usar * no sidebar — quebra o font de icones do Streamlit */
-section[data-testid="stSidebar"] p,
-section[data-testid="stSidebar"] span:not([data-testid]),
-section[data-testid="stSidebar"] div[class*="label"],
-section[data-testid="stSidebar"] label {{
-    color: {TEXT_PRIMARY};
-    font-family: 'Inter', -apple-system, sans-serif;
-}}
-section[data-testid="stSidebar"] .stRadio > div {{
-    gap: 2px;
-}}
-section[data-testid="stSidebar"] .stRadio label {{
-    color: {TEXT_SECONDARY} !important;
-    font-size: 0.875rem !important;
-    font-weight: 500;
-    padding: 8px 10px !important;
-    border-radius: 8px;
-    transition: background 0.15s;
-}}
-section[data-testid="stSidebar"] .stSelectbox > div > div {{
-    background-color: {BG_APP} !important;
-    border: 1px solid {BORDER} !important;
-    border-radius: 8px !important;
-    color: {TEXT_PRIMARY} !important;
-    font-size: 0.875rem;
-}}
-section[data-testid="stSidebar"] .stSelectbox label {{
-    color: {TEXT_SECONDARY} !important;
-    font-size: 0.72rem !important;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-}}
-section[data-testid="stSidebar"] .stSelectbox svg {{
-    fill: {TEXT_SECONDARY} !important;
-}}
-
-/* Cards KPI — container queries para escalar com a largura real do card */
-.kpi-card {{
-    background: {BG_CARD};
-    border: 1px solid {BORDER};
-    border-radius: 16px;
-    padding: 16px 14px 14px 14px;
-    margin-bottom: 10px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
-    transition: box-shadow 0.2s ease, transform 0.2s ease;
-    min-width: 0;
-    overflow: visible;
-    position: relative;
-    /* Declara o card como container para que cqw funcione nos filhos */
-    container-type: inline-size;
-    container-name: kpi;
-}}
-.kpi-card:hover {{
-    box-shadow: 0 2px 8px rgba(0,0,0,0.06), 0 8px 24px rgba(0,0,0,0.10);
-    transform: translateY(-2px);
-}}
-.kpi-label {{
-    /*
-     * cqw = 1% da largura do card (nao do viewport).
-     * Sidebar fechado: card ~225px → 5.5cqw ≈ 12.4px → capped 0.70rem
-     * Sidebar aberto:  card ~175px → 5.5cqw ≈  9.6px → ~0.60rem
-     */
-    font-size: clamp(0.58rem, 5.5cqw, 0.70rem);
-    color: {TEXT_SECONDARY};
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 6px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}}
-.kpi-value {{
-    /*
-     * Sidebar fechado: card ~225px → 10.7cqw ≈ 24px = 1.50rem (maximo)
-     * Sidebar aberto:  card ~175px → 10.7cqw ≈ 18.7px ≈ 1.17rem
-     */
-    font-size: clamp(0.90rem, 10.7cqw, 1.50rem);
-    font-weight: 700;
-    color: {TEXT_PRIMARY};
-    line-height: 1.15;
-    letter-spacing: -0.02em;
-    overflow-wrap: break-word;
-    word-break: break-word;
-}}
-.kpi-value.positivo {{ color: {GREEN}; }}
-.kpi-value.negativo {{ color: {RED}; }}
-.kpi-value.neutro   {{ color: {BLUE}; }}
-
-/* Barra de filtros */
-.filter-bar {{
-    background: {BG_CARD};
-    border: 1px solid {BORDER};
-    border-radius: 12px;
-    padding: 10px 18px;
-    margin-bottom: 20px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
-}}
-.filter-bar-label {{
-    font-size: 0.70rem;
-    color: {TEXT_SECONDARY};
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    margin-right: 6px;
-}}
-.filter-tag {{
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    background: {BG_APP};
-    border: 1px solid {BORDER};
-    border-radius: 20px;
-    padding: 4px 12px;
-    font-size: 0.80rem;
-    font-weight: 500;
-}}
-.filter-tag .label {{ color: {TEXT_SECONDARY}; font-size: 0.72rem; }}
-.filter-tag .value {{ color: {BLUE}; font-weight: 600; }}
-
-/* Titulos */
-.page-title {{
-    font-size: 1.60rem;
-    font-weight: 700;
-    color: {TEXT_PRIMARY};
-    margin: 0 0 2px 0;
-    letter-spacing: -0.02em;
-}}
-.page-subtitle {{
-    font-size: 0.875rem;
-    color: {TEXT_SECONDARY};
-    margin-bottom: 20px;
-}}
-
-/* Container nativo do Plotly no Streamlit */
-[data-testid="stPlotlyChart"] {{
-    background: {BG_CARD};
-    border: 1px solid {BORDER};
-    border-radius: 16px;
-    padding: 8px 12px 4px 12px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
-    margin-bottom: 12px;
-    overflow: hidden !important;
-}}
-[data-testid="stPlotlyChart"] > div {{
-    overflow: hidden !important;
-}}
-/* Esconde scrollbar de qualquer container interno do Streamlit */
-[data-testid="stPlotlyChart"] ::-webkit-scrollbar {{
-    display: none !important;
-}}
-
-/* Divider */
-.divider {{
-    height: 1px;
-    background: {BORDER};
-    margin: 14px 0;
-}}
-
-/* Warn box */
-.warn-box {{
-    background: #fff8f0;
-    border: 1px solid #fcd3a8;
-    border-left: 3px solid {ORANGE};
-    border-radius: 10px;
-    padding: 11px 16px;
-    font-size: 0.82rem;
-    color: {TEXT_PRIMARY};
-    margin-bottom: 16px;
-}}
-
-/* Sidebar estrutura */
-.sidebar-section {{
-    font-size: 0.68rem;
-    color: {TEXT_SECONDARY};
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-weight: 600;
-    margin: 18px 0 6px 0;
-}}
-.sidebar-subtitle {{
-    font-size: 0.72rem;
-    color: {TEXT_SECONDARY};
-    margin-bottom: 4px;
-}}
-
-/* Checkboxes compactos na sidebar */
-section[data-testid="stSidebar"] .stCheckbox label p {{
-    font-size: 0.80rem !important;
-    color: {TEXT_PRIMARY} !important;
-    line-height: 1.3;
-}}
-section[data-testid="stSidebar"] .stCheckbox {{
-    margin-bottom: 0px !important;
-    padding: 1px 0 !important;
-}}
-
-/* Expander de categorias — nao tocar em SVG/icones */
-section[data-testid="stSidebar"] .stExpander {{
-    border: 1px solid {BORDER} !important;
-    border-radius: 8px !important;
-    background: {BG_APP} !important;
-}}
-section[data-testid="stSidebar"] .stExpander summary p {{
-    font-size: 0.875rem !important;
-    color: {TEXT_PRIMARY} !important;
-    font-weight: 500;
-}}
-section[data-testid="stSidebar"] .stTextInput input {{
-    font-size: 0.82rem !important;
-    padding: 6px 10px !important;
-    border-radius: 7px !important;
-    border: 1px solid {BORDER} !important;
-    background: {BG_CARD} !important;
-    color: {TEXT_PRIMARY} !important;
-}}
-.kpi-info {{ position: relative; flex-shrink: 0; margin-left: 4px; }}
-.kpi-info > summary {{
-    list-style: none; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
-    width: 15px; height: 15px; border-radius: 50%;
-    border: 1.5px solid #a0a0a8; color: #a0a0a8;
-    font-size: 0.58rem; font-weight: 700; font-style: italic;
-    user-select: none; margin-top: 1px;
-    transition: color 0.15s, border-color 0.15s;
-}}
-.kpi-info > summary::-webkit-details-marker {{ display: none; }}
-.kpi-info > summary:hover {{ color: {BLUE}; border-color: {BLUE}; }}
-.kpi-info > .kpi-info-box {{ display: none; }}
-.kpi-info[open] > .kpi-info-box {{
-    display: block; position: absolute;
-    right: 0; top: calc(100% + 4px); z-index: 9999;
-    background: #fff; border: 1px solid #d2d2d7; border-radius: 10px;
-    padding: 10px 12px; min-width: 200px; max-width: 260px;
-    font-size: 0.70rem; line-height: 1.55; color: #3d3d3f;
-    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
-    white-space: normal; font-weight: 400;
-    text-transform: none; letter-spacing: 0;
-}}
-</style>
-""", unsafe_allow_html=True)
-
 # ─── Constantes ────────────────────────────────────────────────────────────────
 MESES_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Marco", 4: "Abril",
@@ -557,9 +627,9 @@ def _run_auth() -> None:
         remember_me_available = _ensure_auth_storage()
         st.markdown(
             f"<div style='text-align:center;padding:48px 0 28px 0;'>"
-            f"<div style='font-size:1.60rem;font-weight:700;color:{TEXT_PRIMARY};"
+            f"<div style='font-size:1.60rem;font-weight:700;color:{_P()["TEXT_PRIMARY"]};"
             f"letter-spacing:-0.02em;'>BI Finance</div>"
-            f"<div style='font-size:0.875rem;color:{TEXT_SECONDARY};margin-top:4px;'>Scua</div>"
+            f"<div style='font-size:0.875rem;color:{_P()["TEXT_SECONDARY"]};margin-top:4px;'>Scua</div>"
             f"</div>",
             unsafe_allow_html=True,
         )
@@ -976,31 +1046,32 @@ def filter_bar_html(ano: int, mes: int, centro: str, cat_label: str = "") -> str
 
 
 def render_chart(fig: go.Figure) -> None:
+    P = st.session_state.get("_active_palette", _PALETTE_LIGHT)
     # Extrai o titulo antes de zerar — title={"text":""} e necessario para
     # impedir que versoes novas do Streamlit renderizem o titulo Plotly como HTML
     titulo = (fig.layout.title.text or "").strip()
 
     fig.update_layout(
-        paper_bgcolor=BG_CARD,
+        paper_bgcolor=P["BG_CARD"],
         plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(color=TEXT_PRIMARY, family="Inter, -apple-system, sans-serif", size=11),
+        font=dict(color=P["TEXT_PRIMARY"], family="Inter, -apple-system, sans-serif", size=11),
         # String vazia explicita — None e no-op no Plotly e Streamlit exibe "undefined"
         title={"text": ""},
         margin=dict(l=10, r=10, t=54, b=56),
         legend=dict(
             orientation="h", y=-0.16, x=0.5, xanchor="center",
-            font=dict(size=10, color=TEXT_SECONDARY),
+            font=dict(size=10, color=P["TEXT_SECONDARY"]),
             bgcolor="rgba(0,0,0,0)", bordercolor="rgba(0,0,0,0)",
         ),
         xaxis=dict(
-            gridcolor="#ebebeb", zerolinecolor=BORDER,
-            tickfont=dict(size=10, color=TEXT_SECONDARY),
-            linecolor=BORDER, showgrid=True,
+            gridcolor=P["GRID_COLOR"], zerolinecolor=P["BORDER"],
+            tickfont=dict(size=10, color=P["TEXT_SECONDARY"]),
+            linecolor=P["BORDER"], showgrid=True,
         ),
         yaxis=dict(
-            gridcolor="#ebebeb", zerolinecolor=BORDER,
-            tickfont=dict(size=10, color=TEXT_SECONDARY),
-            linecolor=BORDER, showgrid=True,
+            gridcolor=P["GRID_COLOR"], zerolinecolor=P["BORDER"],
+            tickfont=dict(size=10, color=P["TEXT_SECONDARY"]),
+            linecolor=P["BORDER"], showgrid=True,
         ),
     )
 
@@ -1011,7 +1082,7 @@ def render_chart(fig: go.Figure) -> None:
             y=1.0,   yref="paper",
             xanchor="center", yanchor="bottom",
             yshift=8,
-            font=dict(size=13, color=TEXT_PRIMARY,
+            font=dict(size=13, color=P["TEXT_PRIMARY"],
                        family="Inter, -apple-system, sans-serif"),
             showarrow=False,
         )
@@ -1466,17 +1537,17 @@ def _bar_saldo_chart(x, ent, sai, saldo, lbl_ent, lbl_sai, titulo: str,
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=x, y=ent, name="Entradas",
-        marker_color=GREEN, opacity=0.90,
+        marker_color=_P()["GREEN"], opacity=0.90,
         marker_line=dict(width=0),
         text=lbl_ent, textposition="outside",
-        textfont=dict(size=8, color=TEXT_PRIMARY),
+        textfont=dict(size=8, color=_P()["TEXT_PRIMARY"]),
     ))
     fig.add_trace(go.Bar(
         x=x, y=[-v for v in sai], name="Saidas",
-        marker_color=RED, opacity=0.90,
+        marker_color=_P()["RED"], opacity=0.90,
         marker_line=dict(width=0),
         text=lbl_sai, textposition="outside",
-        textfont=dict(size=8, color=TEXT_PRIMARY),
+        textfont=dict(size=8, color=_P()["TEXT_PRIMARY"]),
     ))
     scatter_mode = "lines+markers+text" if lbl_saldo else "lines+markers"
     fig.add_trace(go.Scatter(
@@ -1484,7 +1555,7 @@ def _bar_saldo_chart(x, ent, sai, saldo, lbl_ent, lbl_sai, titulo: str,
         mode=scatter_mode,
         text=lbl_saldo,
         textposition="top center",
-        textfont=dict(size=8, color=TEXT_PRIMARY),
+        textfont=dict(size=8, color=_P()["TEXT_PRIMARY"]),
         line=dict(color="#000000", width=2),
         marker=dict(size=4, color="#000000"),
     ))
@@ -1544,7 +1615,7 @@ def fig_caixa_proj(saldo_proj: dict) -> go.Figure:
     periodos = sorted(saldo_proj.keys())[:6]
     lbs  = [f"{MESES_ABREV[p.month]}/{p.year}" for p in periodos]
     vals = [saldo_proj[p] for p in periodos]
-    cores = [GREEN if v >= 0 else RED for v in vals]
+    cores = [_P()["GREEN"] if v >= 0 else _P()["RED"] for v in vals]
     tpos = ["inside" if v < 0 else "outside" for v in vals]
     fig = go.Figure(go.Bar(
         x=lbs, y=vals, marker_color=cores, marker_line=dict(width=0), opacity=0.90,
@@ -1567,7 +1638,7 @@ def fig_proj_4_meses(proj: dict[str, float]) -> go.Figure:
     for p_str in periodos_str:
         p = pd.Period(p_str, freq="M")
         lbs.append(f"{MESES_ABREV[p.month]}/{p.year}")
-    cores = [GREEN if v >= 0 else RED for v in vals]
+    cores = [_P()["GREEN"] if v >= 0 else _P()["RED"] for v in vals]
     # Para barras negativas "inside" garante que o rotulo fique visivel dentro da barra.
     tpos = ["inside" if v < 0 else "outside" for v in vals]
     fig = go.Figure(go.Bar(
@@ -1590,7 +1661,7 @@ def fig_proj_4_meses(proj: dict[str, float]) -> go.Figure:
 def fig_mrr(serie: pd.Series, ano: int) -> go.Figure:
     lbs = [f"{MESES_ABREV[m]} {ano}" for m in serie.index]
     fig = go.Figure(go.Bar(
-        x=lbs, y=serie.values, marker_color=BLUE, marker_line=dict(width=0), opacity=0.85,
+        x=lbs, y=serie.values, marker_color=_P()["BLUE"], marker_line=dict(width=0), opacity=0.85,
         text=[f"{v/1000:.0f}k" if v > 0 else "" for v in serie.values],
         textposition="inside",
         textfont=dict(size=9, color="#ffffff"),
@@ -1711,7 +1782,7 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
 
     # ── Linha 2: Receitas ─────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:18px 0 6px 0;'>Receitas</div>",
         unsafe_allow_html=True,
     )
@@ -1728,7 +1799,7 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
 
     # ── Linha 3: Despesas ─────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:18px 0 6px 0;'>Despesas</div>",
         unsafe_allow_html=True,
     )
@@ -1745,7 +1816,7 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
 
     # ── Linha 3b: Estrutura das despesas realizadas (base caixa) ──────────────
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:10px 0 6px 0;'>"
         f"Estrutura de Despesas Previstas — Vencimento | {MESES_PT[mes]} {ano}</div>",
         unsafe_allow_html=True,
@@ -1761,7 +1832,7 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
         _ecol.markdown(kpi_card(_elabel, _ev, cor="negativo", info=_einfo), unsafe_allow_html=True)
         _pct_txt = f"{_ev / _rec_base * 100:.1f}% da Rec. Realizada" if _rec_base else "—"
         _ecol.markdown(
-            f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};margin-top:-6px;"
+            f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};margin-top:-6px;"
             f"padding:0 4px;'>{_pct_txt}</div>",
             unsafe_allow_html=True,
         )
@@ -1799,7 +1870,7 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:18px 0 6px 0;'>"
         f"Ranking de Categorias de Despesas — Top 10 | {MESES_PT[mes]} {ano}</div>",
         unsafe_allow_html=True,
@@ -2106,7 +2177,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
 
     # ── Projecoes manuais ─────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:0 0 8px 0;'>Projecoes Manuais</div>",
         unsafe_allow_html=True,
     )
@@ -2194,7 +2265,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
         for lbl, col in zip(["Identificacao", "Tipo", "Data Inicial", "Data Final",
                               "Valor Mensal", "Total Projetado", ""], header):
             col.markdown(
-                f"<div style='font-size:0.68rem;font-weight:600;color:{TEXT_SECONDARY};"
+                f"<div style='font-size:0.68rem;font-weight:600;color:{_P()["TEXT_SECONDARY"]};"
                 f"text-transform:uppercase;letter-spacing:0.05em;padding:4px 0;'>{lbl}</div>",
                 unsafe_allow_html=True,
             )
@@ -2204,7 +2275,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
             n_m = (fim.year - ini.year) * 12 + (fim.month - ini.month) + 1
             total = p["valor_mensal"] * n_m
             tipo_lbl = "Entrada" if p["tipo"] == "entrada" else "Saida"
-            cor_tipo = GREEN if p["tipo"] == "entrada" else RED
+            cor_tipo = _P()["GREEN"] if p["tipo"] == "entrada" else _P()["RED"]
             row = st.columns([3, 1.5, 1.5, 1.5, 1.5, 1.5, 1])
             row[0].markdown(f"<div style='font-size:0.875rem;padding:6px 0;'>{p['nome']}</div>",
                             unsafe_allow_html=True)
@@ -2228,7 +2299,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
                 st.rerun()
     else:
         st.markdown(
-            f"<div style='font-size:0.82rem;color:{TEXT_SECONDARY};padding:8px 0 16px 0;'>"
+            f"<div style='font-size:0.82rem;color:{_P()["TEXT_SECONDARY"]};padding:8px 0 16px 0;'>"
             "Nenhuma projecao cadastrada.</div>",
             unsafe_allow_html=True,
         )
@@ -2237,7 +2308,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
 
     # ── Renovacao automatica ──────────────────────────────────────────────────
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:0 0 8px 0;'>Renovacao Automatica de Contratos</div>",
         unsafe_allow_html=True,
     )
@@ -2254,7 +2325,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
 
     if todos_elegiveis.empty:
         st.markdown(
-            f"<div style='font-size:0.82rem;color:{TEXT_SECONDARY};padding:4px 0 12px 0;'>"
+            f"<div style='font-size:0.82rem;color:{_P()["TEXT_SECONDARY"]};padding:4px 0 12px 0;'>"
             "Nenhum contrato elegivel identificado para renovacao automatica.</div>",
             unsafe_allow_html=True,
         )
@@ -2263,7 +2334,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
             hdr = st.columns([3, 2, 2, 2, 1])
             for lbl, col in zip(["Cliente", "Inicio Renovacao", "Fim Renovacao", "Valor Mensal", ""], hdr):
                 col.markdown(
-                    f"<div style='font-size:0.68rem;font-weight:600;color:{TEXT_SECONDARY};"
+                    f"<div style='font-size:0.68rem;font-weight:600;color:{_P()["TEXT_SECONDARY"]};"
                     f"text-transform:uppercase;letter-spacing:0.05em;padding:4px 0;'>{lbl}</div>",
                     unsafe_allow_html=True,
                 )
@@ -2274,7 +2345,7 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
                 ini_r  = row["competencia_inicio_renovacao"]
                 fim_r  = row["competencia_fim_renovacao"]
                 val_r  = float(row["valor_base_renovacao_num"])
-                cor_nome = TEXT_SECONDARY if excluido else TEXT_PRIMARY
+                cor_nome = _P()["TEXT_SECONDARY"] if excluido else _P()["TEXT_PRIMARY"]
                 r[0].markdown(f"<div style='font-size:0.875rem;color:{cor_nome};padding:6px 0;'>"
                               f"{'~~' if excluido else ''}{nome_c}{'~~' if excluido else ''}</div>",
                               unsafe_allow_html=True)
@@ -2385,7 +2456,7 @@ def pagina_receita(data: dict, ano: int, mes: int, centros_sel: list[str], centr
 
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:18px 0 6px 0;'>"
         f"Top 5 Maiores Clientes — CR | {MESES_PT[mes]} {ano}</div>",
         unsafe_allow_html=True,
@@ -2507,20 +2578,20 @@ def _dre_row(label: str, valor: float, base: float, kind: str = "item") -> str:
     brl = _dre_fmt_brl(valor)
     pct = _dre_pct(valor, base)
     if kind == "subtotal":
-        cor = GREEN if valor >= 0 else RED
+        cor = _P()["GREEN"] if valor >= 0 else _P()["RED"]
         return (
-            f"<tr style='background:#f5f5f7;border-top:1px solid {BORDER};border-bottom:1px solid {BORDER};'>"
-            f"<td style='font-weight:700;padding:10px 14px;color:{TEXT_PRIMARY};'>{label}</td>"
+            f"<tr style='background:{_P()["BG_APP"]};border-top:1px solid {_P()["BORDER"]};border-bottom:1px solid {_P()["BORDER"]};'>"
+            f"<td style='font-weight:700;padding:10px 14px;color:{_P()["TEXT_PRIMARY"]};'>{label}</td>"
             f"<td style='font-weight:700;text-align:right;padding:10px 14px;color:{cor};white-space:nowrap;'>{brl}</td>"
-            f"<td style='font-weight:700;text-align:right;padding:10px 14px;color:{TEXT_SECONDARY};'>{pct}</td>"
+            f"<td style='font-weight:700;text-align:right;padding:10px 14px;color:{_P()["TEXT_SECONDARY"]};'>{pct}</td>"
             f"</tr>"
         )
     else:
         return (
             f"<tr>"
-            f"<td style='padding:8px 14px 8px 28px;color:{TEXT_SECONDARY};'>{label}</td>"
-            f"<td style='text-align:right;padding:8px 14px;color:{TEXT_PRIMARY};white-space:nowrap;'>{brl}</td>"
-            f"<td style='text-align:right;padding:8px 14px;color:{TEXT_SECONDARY};'>{pct}</td>"
+            f"<td style='padding:8px 14px 8px 28px;color:{_P()["TEXT_SECONDARY"]};'>{label}</td>"
+            f"<td style='text-align:right;padding:8px 14px;color:{_P()["TEXT_PRIMARY"]};white-space:nowrap;'>{brl}</td>"
+            f"<td style='text-align:right;padding:8px 14px;color:{_P()["TEXT_SECONDARY"]};'>{pct}</td>"
             f"</tr>"
         )
 
@@ -2538,11 +2609,11 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
     if d["score_r40"] is not None:
         sv         = d["score_r40"]
         score_str  = f"{sv:.0f}%"
-        score_cor  = GREEN if sv >= 40 else RED
+        score_cor  = _P()["GREEN"] if sv >= 40 else _P()["RED"]
         status_str = "&#10003; Acima de 40%" if sv >= 40 else "&#10005; Abaixo de 40%"
     else:
         score_str  = "N/D"
-        score_cor  = TEXT_SECONDARY
+        score_cor  = _P()["TEXT_SECONDARY"]
         status_str = "Sem dados do ano anterior"
 
     despesa_nao_oper = d["resultado_financeiro"] + d["outras_nao_oper"]
@@ -2557,19 +2628,19 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
             </div>
             <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap;">
                 <div>
-                    <div style="font-size:0.65rem;color:{TEXT_SECONDARY};text-transform:uppercase;
+                    <div style="font-size:0.65rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;
                                 letter-spacing:0.07em;margin-bottom:4px;">Crescimento MRR</div>
-                    <div style="font-size:1.4rem;font-weight:700;color:{TEXT_PRIMARY};">{cresc_str}</div>
+                    <div style="font-size:1.4rem;font-weight:700;color:{_P()["TEXT_PRIMARY"]};">{cresc_str}</div>
                 </div>
-                <div style="font-size:1.6rem;color:{BORDER};font-weight:300;">+</div>
+                <div style="font-size:1.6rem;color:{_P()["BORDER"]};font-weight:300;">+</div>
                 <div>
-                    <div style="font-size:0.65rem;color:{TEXT_SECONDARY};text-transform:uppercase;
+                    <div style="font-size:0.65rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;
                                 letter-spacing:0.07em;margin-bottom:4px;">Margem EBITDA</div>
-                    <div style="font-size:1.4rem;font-weight:700;color:{TEXT_PRIMARY};">{marg_str}</div>
+                    <div style="font-size:1.4rem;font-weight:700;color:{_P()["TEXT_PRIMARY"]};">{marg_str}</div>
                 </div>
-                <div style="font-size:1.6rem;color:{BORDER};font-weight:300;">=</div>
+                <div style="font-size:1.6rem;color:{_P()["BORDER"]};font-weight:300;">=</div>
                 <div>
-                    <div style="font-size:0.65rem;color:{TEXT_SECONDARY};text-transform:uppercase;
+                    <div style="font-size:0.65rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;
                                 letter-spacing:0.07em;margin-bottom:4px;">Score</div>
                     <div style="font-size:2.2rem;font-weight:800;color:{score_cor};
                                 line-height:1;">{score_str}</div>
@@ -2587,7 +2658,7 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
                     </details>
                 </div>
                 <div class="kpi-value {_cor_oper}">{_dre_fmt_brl(d["despesas_operacionais"])}</div>
-                <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
+                <div style="font-size:0.72rem;color:{_P()["TEXT_SECONDARY"]};margin-top:4px;">
                     {_dre_pct(d["despesas_operacionais"], rb)} da Receita Bruta
                 </div>
             </div>
@@ -2600,7 +2671,7 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
                     </details>
                 </div>
                 <div class="kpi-value {_cor_nao}">{_dre_fmt_brl(despesa_nao_oper)}</div>
-                <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
+                <div style="font-size:0.72rem;color:{_P()["TEXT_SECONDARY"]};margin-top:4px;">
                     {_dre_pct(despesa_nao_oper, rb)} da Receita Bruta
                 </div>
             </div>
@@ -2611,7 +2682,7 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
 
     # ── Tabela DRE ────────────────────────────────────────────────────────────
     st.markdown(
-        f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};text-transform:uppercase;"
+        f"<div style='font-size:0.68rem;color:{_P()["TEXT_SECONDARY"]};text-transform:uppercase;"
         f"letter-spacing:0.08em;font-weight:600;margin:18px 0 8px 0;'>"
         f"Demonstrativo de Resultado — {ano} (base competencia)</div>",
         unsafe_allow_html=True,
@@ -2632,9 +2703,9 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
 
     st.markdown(f"""
     <table style='width:100%;border-collapse:collapse;font-size:0.875rem;
-                  border:1px solid {BORDER};border-radius:8px;overflow:hidden;'>
+                  border:1px solid {_P()["BORDER"]};border-radius:8px;overflow:hidden;'>
         <thead>
-            <tr style='background:{BLUE};color:#fff;'>
+            <tr style='background:{_P()["BLUE"]};color:#fff;'>
                 <th style='text-align:left;padding:10px 14px;font-weight:600;'>Linha</th>
                 <th style='text-align:right;padding:10px 14px;font-weight:600;'>Valor</th>
                 <th style='text-align:right;padding:10px 14px;font-weight:600;'>% Receita Bruta</th>
@@ -2644,8 +2715,145 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
     </table>""", unsafe_allow_html=True)
 
 
+# ─── GitHub Actions ───────────────────────────────────────────────────────────
+
+_GA_ACTIVE_STATUSES = {"queued", "in_progress", "waiting"}
+_GA_DISPATCH_COOLDOWN = 60  # segundos
+
+
+def _ga_secrets() -> dict | None:
+    """Retorna dict com config do GitHub Actions ou None se não configurado."""
+    try:
+        s = st.secrets["github_actions"]
+        return dict(
+            token=str(s["token"]),
+            owner=str(s["repo_owner"]),
+            repo=str(s["repo_name"]),
+            workflow_id=str(s.get("workflow_id", "etl_pipeline.yml")),
+            ref=str(s.get("workflow_ref", "main")),
+        )
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=30)
+def _ga_get_latest_run(owner: str, repo: str, workflow_id: str, token: str) -> dict | None:
+    """Busca o run mais recente do workflow. Cache de 30s."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs"
+    try:
+        r = _requests.get(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            params={"per_page": 1},
+            timeout=8,
+        )
+        r.raise_for_status()
+        runs = r.json().get("workflow_runs", [])
+        return runs[0] if runs else None
+    except Exception:
+        return None
+
+
+def _ga_dispatch(owner: str, repo: str, workflow_id: str, ref: str, token: str) -> bool:
+    """Dispara workflow_dispatch. Retorna True se sucesso (HTTP 204)."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches"
+    try:
+        r = _requests.post(
+            url,
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+            json={"ref": ref},
+            timeout=8,
+        )
+        return r.status_code == 204
+    except Exception:
+        return False
+
+
+def _render_etl_trigger() -> None:
+    """Renderiza o bloco de disparo manual do ETL (visível apenas para admins)."""
+    ga = _ga_secrets()
+    if ga is None:
+        st.caption("GitHub Actions não configurado.")
+        return
+
+    run = _ga_get_latest_run(ga["owner"], ga["repo"], ga["workflow_id"], ga["token"])
+    is_running = bool(run and run.get("status") in _GA_ACTIVE_STATUSES)
+    in_cooldown = (time.time() - st.session_state.get("_etl_last_dispatch_ts", 0)) < _GA_DISPATCH_COOLDOWN
+    btn_disabled = is_running or in_cooldown
+
+    if run:
+        status = run.get("status", "?")
+        conclusion = run.get("conclusion") or ""
+        label_map = {
+            "queued": "Na fila...",
+            "in_progress": "Em execução...",
+            "completed": {
+                "success": "Concluído", "failure": "Falhou", "cancelled": "Cancelado",
+            }.get(conclusion, conclusion),
+        }
+        status_label = label_map.get(status, status)
+        data_str = (run.get("created_at") or "")[:10]
+        st.caption(f"Último: {status_label}" + (f" — {data_str}" if data_str else ""))
+        if run.get("html_url"):
+            st.link_button("Ver no GitHub Actions", run["html_url"], use_container_width=True)
+
+    if st.button(
+        "Executar ETL agora",
+        disabled=btn_disabled,
+        use_container_width=True,
+        help="Inicia o pipeline de ingestão de dados no GitHub Actions.",
+    ):
+        ok = _ga_dispatch(ga["owner"], ga["repo"], ga["workflow_id"], ga["ref"], ga["token"])
+        if ok:
+            st.session_state["_etl_last_dispatch_ts"] = time.time()
+            _ga_get_latest_run.clear()
+            st.success("Pipeline iniciado.")
+            st.rerun()
+        else:
+            st.error("Falha ao iniciar. Verifique o token e as permissões.")
+
+
+# ─── Painel de Configurações ──────────────────────────────────────────────────
+
+def _is_admin() -> bool:
+    """Verifica se o usuário logado tem flag admin=true nas credenciais."""
+    username = st.session_state.get("_username")
+    if not username:
+        return False
+    try:
+        return bool(st.secrets["credentials"][username].get("admin", False))
+    except Exception:
+        return False
+
+
+def _render_settings_panel() -> None:
+    """Conteúdo do popover de configurações."""
+    st.markdown("**Aparência**")
+    pref = st.session_state.get("_theme_pref", "sistema")
+    novo = st.radio(
+        "Tema",
+        options=["sistema", "claro", "escuro"],
+        format_func=lambda x: {"sistema": "Sistema", "claro": "Claro", "escuro": "Escuro"}[x],
+        index=["sistema", "claro", "escuro"].index(pref),
+        label_visibility="collapsed",
+    )
+    if novo != pref:
+        st.session_state["_theme_pref"] = novo
+        st.rerun()
+
+    if _is_admin():
+        st.divider()
+        st.markdown("**Atualização de dados**")
+        _render_etl_trigger()
+
+
 # ─── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
+    _restore_theme_from_cookie()             # lê cookie → _theme_pref no session_state
+    P = _get_palette()                       # palette efetivo (light ou dark)
+    st.session_state["_active_palette"] = P  # disponibiliza para render_chart()
+    _inject_css(P)                           # injeta CSS antes do login (estiliza tela de login)
+    _inject_theme_js()                       # detecta prefers-color-scheme + escreve cookie
     _flush_cookie_write()
     _run_auth()
     _flush_cookie_write()
@@ -2660,13 +2868,19 @@ def main() -> None:
         )
         st.stop()
 
+    # ── Botão de configurações no topo direito ────────────────────────────────
+    _col_spacer, _col_gear = st.columns([10, 1])
+    with _col_gear:
+        with st.popover("⚙", use_container_width=False):
+            _render_settings_panel()
+
     with st.sidebar:
         if LOGO_PATH.exists():
             st.image(str(LOGO_PATH), use_container_width=True)
             st.markdown("<br>", unsafe_allow_html=True)
         else:
             st.markdown(
-                f"<div style='font-size:2.2rem;font-weight:800;color:{TEXT_PRIMARY};"
+                f"<div style='font-size:2.2rem;font-weight:800;color:{P['TEXT_PRIMARY']};"
                 "letter-spacing:-0.03em;padding:8px 0 0 0;'>Scua</div>",
                 unsafe_allow_html=True,
             )
@@ -2743,7 +2957,7 @@ def main() -> None:
                 "Selecionar tudo", key="_cat_all", on_change=_on_select_all,
             )
             st.markdown(
-                f"<div style='height:1px;background:{BORDER};margin:4px 0 6px 0;'></div>",
+                f"<div style='height:1px;background:{P['BORDER']};margin:4px 0 6px 0;'></div>",
                 unsafe_allow_html=True,
             )
             termo = busca.lower() if busca else ""
@@ -2768,9 +2982,9 @@ def main() -> None:
         st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
         ultima_data = data["realizado"]["data_pagamento"].max()
         st.markdown(
-            f"<div style='font-size:0.70rem;color:{TEXT_SECONDARY};line-height:1.6;'>"
+            f"<div style='font-size:0.70rem;color:{P['TEXT_SECONDARY']};line-height:1.6;'>"
             f"Ultima atualizacao<br>"
-            f"<strong style='color:{TEXT_PRIMARY};'>{ultima_data.strftime('%d/%m/%Y')}</strong></div>",
+            f"<strong style='color:{P['TEXT_PRIMARY']};'>{ultima_data.strftime('%d/%m/%Y')}</strong></div>",
             unsafe_allow_html=True,
         )
 
@@ -2779,9 +2993,9 @@ def main() -> None:
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
             nome_exib = st.session_state.get("_display_name", st.session_state["_username"])
             st.markdown(
-                f"<div style='font-size:0.70rem;color:{TEXT_SECONDARY};margin-bottom:8px;line-height:1.5;'>"
+                f"<div style='font-size:0.70rem;color:{P['TEXT_SECONDARY']};margin-bottom:8px;line-height:1.5;'>"
                 f"Conectado como<br>"
-                f"<strong style='color:{TEXT_PRIMARY};'>{nome_exib}</strong></div>",
+                f"<strong style='color:{P['TEXT_PRIMARY']};'>{nome_exib}</strong></div>",
                 unsafe_allow_html=True,
             )
             if st.button("Sair", use_container_width=True):
