@@ -242,7 +242,7 @@ Observacao: estas estimativas foram inferidas pela stack atual e devem ser valid
 
 ### 6.5 Requisitos de seguranca
 
-- `DATABASE_URL`, `CONTA_AZUL_CLIENT_ID`, `CONTA_AZUL_CLIENT_SECRET` e `CONTA_AZUL_REDIRECT_URI` nao podem ser armazenados em repositorio.
+- `DATABASE_URL`, `CONTA_AZUL_CLIENT_ID`, `CONTA_AZUL_CLIENT_SECRET`, `CONTA_AZUL_REDIRECT_URI` e o token `[github_actions]` nao podem ser armazenados em repositorio.
 - O `secrets.toml` do dashboard deve ser montado em runtime ou injetado por secret manager.
 - O processo deve rodar com usuario nao privilegiado.
 - O acesso web deve ficar protegido por HTTPS e, idealmente, tambem por VPN/rede interna.
@@ -271,6 +271,11 @@ O projeto hoje suporta:
 
 - `.streamlit/secrets.toml`
 - `STREAMLIT_SECRETS` em base64
+
+O `secrets.toml` atual contém três blocos:
+
+- `[credentials.*]`: usuários e hashes bcrypt, com campo opcional `admin` para acesso ao painel de configurações e disparo manual de ETL
+- `[github_actions]`: token de Fine-grained PAT do GitHub com permissão `actions: read+write`, usado pelo dashboard para disparar o workflow de ETL manualmente
 
 O time interno deve escolher um padrao operacional:
 

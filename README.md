@@ -214,6 +214,14 @@ python -m contaazul_bi.main run
 [credentials.nome_do_usuario]
 name          = "Nome Completo"
 password_hash = "$2b$12$..."   # hash bcrypt da senha
+admin         = true           # opcional — default false; habilita painel de configurações e ETL manual
+
+[github_actions]               # opcional — necessário apenas para disparo manual de ETL pelo dashboard
+token         = "github_pat_..."   # Fine-grained PAT com permissão actions: read+write
+repo_owner    = "usuario-github"
+repo_name     = "nome-do-repositorio"
+# workflow_id = "etl_pipeline.yml"   # opcional, este é o padrão
+# workflow_ref = "main"              # opcional, este é o padrão
 ```
 
 ---
@@ -257,7 +265,7 @@ O pipeline ETL roda automaticamente via GitHub Actions, conforme definido em [`.
 
 ### Agendamento
 
-O ETL executa **todos os dias às 10:00 BRT** (13:00 UTC), de segunda a domingo.
+O ETL executa **todos os dias às 10:00**, de segunda a domingo.
 
 ### Secrets necessários no GitHub
 
@@ -271,6 +279,16 @@ Configure em: **GitHub → Settings → Secrets and variables → Actions**
 | `CONTA_AZUL_REDIRECT_URI` | URI cadastrada no app |
 
 ### Como acionar manualmente
+
+**Pelo dashboard (recomendado):**
+
+1. Faça login com um usuário que tenha `admin = true` no `secrets.toml`
+2. Clique no ícone ⚙ no canto superior direito
+3. Na seção **Atualização de dados**, clique em **Executar ETL agora**
+
+> O botão fica desabilitado enquanto há uma execução em andamento e por 60 segundos após o disparo (proteção anti-duplo clique).
+
+**Pelo GitHub (alternativo):**
 
 1. Acesse o repositório no GitHub
 2. Clique na aba **Actions**
@@ -321,6 +339,7 @@ python -c "import bcrypt; print(bcrypt.hashpw(b'senha_do_usuario', bcrypt.gensal
 [credentials.nome_login]
 name          = "Nome Completo"
 password_hash = "$2b$12$..."   # cole o hash gerado acima
+admin         = true           # opcional — omitir ou false para usuário sem acesso admin
 ```
 
 **3.** Regenere o `STREAMLIT_SECRETS` em base64 e atualize no Railway.
@@ -333,7 +352,15 @@ Basta apagar o bloco `[credentials.nome_login]` correspondente do `secrets.toml`
 
 - Após **5 tentativas de senha incorretas**, o login fica bloqueado por **5 minutos**
 - A sessão expira automaticamente após **8 horas**
+- Opcionalmente, o usuário pode marcar **"Lembrar de mim neste navegador"** para manter o acesso por até **30 dias** no mesmo navegador
 - Senhas nunca ficam armazenadas em texto puro — apenas o hash bcrypt
+- O navegador recebe apenas um token aleatório revogável; a senha continua sem sair do servidor
+
+### Lembrar de mim
+
+- O recurso vale por **navegador**, não por máquina inteira: outro navegador ou limpeza de cookies exigirá novo login
+- O token persistente é invalidado ao clicar em **Sair**
+- Em máquinas compartilhadas, deixe a opção desmarcada
 
 ---
 
@@ -352,6 +379,7 @@ Basta apagar o bloco `[credentials.nome_login]` correspondente do `secrets.toml`
 |---|---|
 | `bi_cenarios` | Linha única (id=1) com os cenários de projeção de caixa em formato JSONB. Editada pelo dashboard. |
 | `bi_oauth_tokens` | Linha única (id=1) com os tokens OAuth do Conta Azul. Atualizada automaticamente pelo ETL. |
+| `bi_remember_tokens` | Tokens persistentes de "lembrar de mim" por navegador, com expiração e revogação no logout. |
 
 Ambas têm **Row Level Security (RLS)** habilitado — apenas o `service_role` tem acesso (o `anon` não consegue ler nem escrever).
 

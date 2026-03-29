@@ -296,7 +296,8 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     background: transparent !important;
     border: 1px solid {P["BORDER"]} !important;
     border-radius: 8px !important;
-    padding: 0 0 0 1.35rem !important;
+    padding: 0 !important;
+    text-align: center !important;
     color: {P["TEXT_SECONDARY"]} !important;
     font-size: 0.95rem !important;
     line-height: 2rem !important;
