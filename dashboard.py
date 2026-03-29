@@ -103,9 +103,9 @@ def _inject_css(P: dict) -> None:
     padding: 1.8rem 1.5rem 3rem 1.5rem !important;
     max-width: 100% !important;
 }}
-/* Sidebar: reduz espaço no topo */
+/* Sidebar: alinha topo com o block-container */
 section[data-testid="stSidebar"] > div:first-child {{
-    padding-top: 1rem !important;
+    padding-top: 1.8rem !important;
 }}
 /* Colunas do Streamlit: remove gap padrao excessivo */
 [data-testid="stHorizontalBlock"] {{
@@ -285,7 +285,7 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     right: 0.75rem !important;
     left: auto !important;
     z-index: 999999 !important;
-    width: 2.8rem !important;
+    width: 3.9rem !important;
     height: 2rem !important;
     min-width: 0 !important;
     overflow: hidden !important;
@@ -293,7 +293,7 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     background: transparent !important;
     border: 1px solid {P["BORDER"]} !important;
     border-radius: 8px !important;
-    padding: 0 0 0 0.75rem !important;
+    padding: 0 0 0 1.35rem !important;
     color: {P["TEXT_SECONDARY"]} !important;
     font-size: 0.95rem !important;
     line-height: 2rem !important;
@@ -304,13 +304,11 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     border-color: {P["TEXT_SECONDARY"]} !important;
     color: {P["TEXT_PRIMARY"]} !important;
 }}
-/* Painel do popover — abre próximo ao botão no canto direito */
-[data-testid="stPopover"] {{
-    position: fixed !important;
-    top: 2.8rem !important;
+/* Painel do popover — reposicionado via JS (inline styles override CSS) */
+[data-baseweb="popover"] {{
     right: 0.75rem !important;
     left: auto !important;
-    z-index: 999998 !important;
+    transform: none !important;
 }}
 /* Zera a altura do wrapper do popover no DOM para não empurrar o conteúdo */
 [data-testid="element-container"]:has([data-testid="stPopoverButton"]) {{
@@ -430,6 +428,19 @@ def _inject_theme_js() -> None:
         const dark = window.matchMedia("(prefers-color-scheme: dark)").matches ? "1" : "0";
         document.cookie = "app_dark_scheme=" + dark + "; path=/; max-age=86400; SameSite=Lax";
     }}
+
+    // Reposiciona o painel do popover para o canto direito
+    // (Streamlit usa inline styles via JS que sobrepõem CSS puro)
+    function fixPopoverPosition() {{
+        const panels = document.querySelectorAll('[data-baseweb="popover"]');
+        panels.forEach(function(panel) {{
+            panel.style.setProperty('right', '0.75rem', 'important');
+            panel.style.setProperty('left', 'auto', 'important');
+            panel.style.setProperty('transform', 'none', 'important');
+        }});
+    }}
+    const observer = new MutationObserver(fixPopoverPosition);
+    observer.observe(document.body, {{ childList: true, subtree: true }});
 }})();
 </script>
 """)
