@@ -274,6 +274,25 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     display: none !important;
 }}
 
+/* Botão de configurações fixado no header */
+[data-testid="stPopoverButton"] {{
+    position: fixed !important;
+    top: 0.45rem !important;
+    right: 3.5rem !important;
+    z-index: 999999 !important;
+    background: transparent !important;
+    border: 1px solid transparent !important;
+    padding: 0.25rem 0.45rem !important;
+    border-radius: 8px !important;
+    color: {P["TEXT_SECONDARY"]} !important;
+    transition: background 0.15s, border-color 0.15s !important;
+}}
+[data-testid="stPopoverButton"]:hover {{
+    background: {P["BG_CARD"]} !important;
+    border-color: {P["BORDER"]} !important;
+    color: {P["TEXT_PRIMARY"]} !important;
+}}
+
 /* Divider */
 .divider {{
     height: 1px;
@@ -2868,11 +2887,9 @@ def main() -> None:
         )
         st.stop()
 
-    # ── Botão de configurações no topo direito ────────────────────────────────
-    _col_spacer, _col_gear = st.columns([10, 1])
-    with _col_gear:
-        with st.popover("⚙", use_container_width=False):
-            _render_settings_panel()
+    # ── Botão de configurações — renderizado no DOM, fixado no header via CSS ──
+    with st.popover("⚙", use_container_width=False):
+        _render_settings_panel()
 
     with st.sidebar:
         if LOGO_PATH.exists():
