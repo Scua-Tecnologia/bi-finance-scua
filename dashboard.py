@@ -100,8 +100,12 @@ def _inject_css(P: dict) -> None:
 }}
 /* Padding-top para nao sobrepor o header fixo */
 .block-container {{
-    padding: 3.5rem 1.5rem 3rem 1.5rem !important;
+    padding: 1.8rem 1.5rem 3rem 1.5rem !important;
     max-width: 100% !important;
+}}
+/* Sidebar: reduz espaço no topo */
+section[data-testid="stSidebar"] > div:first-child {{
+    padding-top: 1rem !important;
 }}
 /* Colunas do Streamlit: remove gap padrao excessivo */
 [data-testid="stHorizontalBlock"] {{
