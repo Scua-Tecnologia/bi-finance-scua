@@ -41,13 +41,31 @@ INSERT INTO bi_oauth_tokens (id, access_token, token_type, expires_in, obtained_
 VALUES (1, '', 'Bearer', 3600, 0)
 ON CONFLICT (id) DO NOTHING;
 
+-- ─── Tokens de "lembrar de mim" por navegador ───────────────────────────────
+-- Permite manter o dashboard desbloqueado no mesmo navegador por um período
+-- limitado, sem salvar senha nem hash de senha no cliente.
+
+CREATE TABLE IF NOT EXISTS bi_remember_tokens (
+    selector     TEXT        PRIMARY KEY,
+    username     TEXT        NOT NULL,
+    token_hash   TEXT        NOT NULL,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at   TIMESTAMPTZ NOT NULL,
+    user_agent   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_bi_remember_tokens_username
+    ON bi_remember_tokens (username);
+
 -- ─── Row Level Security ───────────────────────────────────────────────────────
 -- As tabelas de analytics (fato_*, dim_*) são substituídas a cada ETL, então
 -- RLS não é aplicado a elas (seriam dropadas e recriadas com permissões default).
--- Para bi_cenarios e bi_oauth_tokens, habilite RLS e restrinja ao service_role:
+-- Para as tabelas de controle, habilite RLS e restrinja ao service_role:
 
 ALTER TABLE bi_cenarios      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bi_oauth_tokens  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bi_remember_tokens ENABLE ROW LEVEL SECURITY;
 
 -- Permite leitura e escrita apenas via service_role (backend/ETL)
 -- O dashboard usa a DATABASE_URL com service_role key, então tem acesso total.
@@ -58,6 +76,12 @@ CREATE POLICY "service_role full access" ON bi_cenarios
     WITH CHECK (true);
 
 CREATE POLICY "service_role full access" ON bi_oauth_tokens
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+CREATE POLICY "service_role full access on remember tokens" ON bi_remember_tokens
     FOR ALL
     TO service_role
     USING (true)

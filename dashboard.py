@@ -4,8 +4,13 @@ Dashboard Financeiro – Scua
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import time
+import urllib.parse
 import uuid
 from pathlib import Path
 
@@ -39,6 +44,13 @@ WHITE          = "#ffffff"
 _PROJECT_ROOT = Path(__file__).parent
 LOGO_PATH = _PROJECT_ROOT / "assets" / "logo_scua.png"
 CENARIOS_PATH = _PROJECT_ROOT / "output" / "cenarios.json"
+REMEMBER_COOKIE_NAME = "bi_finance_remember"
+SESSION_TIMEOUT_SECONDS = 8 * 3600
+try:
+    REMEMBER_ME_DAYS = max(1, int(os.environ.get("BI_REMEMBER_ME_DAYS", "30")))
+except ValueError:
+    REMEMBER_ME_DAYS = 30
+REMEMBER_ME_MAX_AGE_SECONDS = REMEMBER_ME_DAYS * 24 * 3600
 
 
 def _load_cenarios() -> dict:
@@ -113,6 +125,79 @@ def _extrair_nomes_categoria(data: dict) -> list[str]:
             except TypeError:
                 pass
     return sorted(nomes)
+
+
+def _set_authenticated_session(username: str, display_name: str, remember_selector: str | None = None) -> None:
+    st.session_state["_authenticated"] = True
+    st.session_state["_username"] = username
+    st.session_state["_display_name"] = display_name
+    st.session_state["_login_ts"] = time.time()
+    if remember_selector:
+        st.session_state["_remember_selector"] = remember_selector
+    else:
+        st.session_state.pop("_remember_selector", None)
+
+
+def _clear_authenticated_session() -> None:
+    for key in ["_authenticated", "_username", "_display_name", "_login_ts", "_remember_selector"]:
+        st.session_state.pop(key, None)
+
+
+def _queue_cookie_write(action: str, value: str | None = None) -> None:
+    st.session_state["_auth_cookie_op"] = {"action": action, "value": value or ""}
+
+
+def _flush_cookie_write() -> None:
+    op = st.session_state.pop("_auth_cookie_op", None)
+    if not op:
+        return
+
+    cookie_name = json.dumps(REMEMBER_COOKIE_NAME)
+    if op["action"] == "set":
+        cookie_value = json.dumps(op["value"])
+        payload = f"""
+<div style="display:none"></div>
+<script>
+(() => {{
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = {cookie_name} + "=" + encodeURIComponent({cookie_value}) +
+    "; path=/; max-age={REMEMBER_ME_MAX_AGE_SECONDS}; SameSite=Lax" + secure;
+}})();
+</script>
+"""
+    else:
+        payload = f"""
+<div style="display:none"></div>
+<script>
+(() => {{
+  const secure = window.location.protocol === "https:" ? "; Secure" : "";
+  document.cookie = {cookie_name} +
+    "=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax" + secure;
+}})();
+</script>
+"""
+    st.html(payload, unsafe_allow_javascript=True)
+
+
+def _hash_remember_validator(validator: str) -> str:
+    return hashlib.sha256(validator.encode("utf-8")).hexdigest()
+
+
+def _current_user_agent() -> str:
+    try:
+        return str(st.context.headers.get("User-Agent", ""))[:512]
+    except Exception:
+        return ""
+
+
+def _parse_remember_cookie(raw_cookie: str | None) -> tuple[str, str] | None:
+    if not raw_cookie:
+        return None
+    decoded = urllib.parse.unquote(str(raw_cookie)).strip()
+    selector, sep, validator = decoded.partition(".")
+    if not sep or not selector or not validator:
+        return None
+    return selector, validator
 
 # ─── CSS ──────────────────────────────────────────────────────────────────────
 st.markdown(f"""
@@ -419,25 +504,23 @@ def _run_auth() -> None:
     Se as credenciais não puderem ser carregadas, o acesso é negado (fail closed).
     """
     import bcrypt as _bcrypt
-
-    import time as _time
-
-    _SESSION_TIMEOUT_SECONDS = 8 * 3600  # 8 horas
+    session_expired = False
 
     if st.session_state.get("_authenticated"):
         login_ts = st.session_state.get("_login_ts", 0.0)
-        if _time.time() - login_ts > _SESSION_TIMEOUT_SECONDS:
-            for key in ["_authenticated", "_username", "_display_name", "_login_ts"]:
-                st.session_state.pop(key, None)
-            st.info("Sua sessão expirou. Faça login novamente.")
+        if time.time() - login_ts > SESSION_TIMEOUT_SECONDS:
+            _clear_authenticated_session()
+            session_expired = True
         else:
             return
 
     # Tenta carregar credenciais do secrets.toml / variáveis de ambiente
     try:
         creds = st.secrets["credentials"]
-        has_creds = len(dict(creds)) > 0
+        creds_dict = dict(creds)
+        has_creds = len(creds_dict) > 0
     except Exception:
+        creds_dict = {}
         has_creds = False
 
     if not has_creds:
@@ -448,24 +531,30 @@ def _run_auth() -> None:
         )
         st.stop()
 
+    if _try_restore_session_from_cookie(creds_dict):
+        return
+    _flush_cookie_write()
+
     # ── Lockout por tentativas excessivas ─────────────────────────────────────
     _MAX_ATTEMPTS = 5
     _LOCKOUT_SECONDS = 300  # 5 minutos
 
     attempts = st.session_state.get("_login_attempts", 0)
     locked_until = st.session_state.get("_locked_until", 0.0)
-
-    import time as _time
-    now = _time.time()
+    now = time.time()
 
     if locked_until > now:
         remaining = int(locked_until - now)
         st.error(f"Muitas tentativas incorretas. Tente novamente em {remaining} segundos.")
         st.stop()
 
+    if session_expired:
+        st.info("Sua sessão expirou. Faça login novamente.")
+
     # ── Tela de login ─────────────────────────────────────────────────────────
     _, col, _ = st.columns([1, 1, 1])
     with col:
+        remember_me_available = _ensure_auth_storage()
         st.markdown(
             f"<div style='text-align:center;padding:48px 0 28px 0;'>"
             f"<div style='font-size:1.60rem;font-weight:700;color:{TEXT_PRIMARY};"
@@ -476,9 +565,18 @@ def _run_auth() -> None:
         )
         username = st.text_input("Usuário", key="_login_username")
         password = st.text_input("Senha", type="password", key="_login_password")
+        remember_me = st.checkbox(
+            f"Lembrar de mim neste navegador por {REMEMBER_ME_DAYS} dias",
+            value=False,
+            disabled=not remember_me_available,
+            help="Mantém este navegador autorizado mesmo após fechar a aba. Evite usar em máquinas compartilhadas.",
+        )
+        if not remember_me_available:
+            st.caption("O recurso de lembrar de mim só fica disponível quando o banco de dados está configurado.")
 
         if st.button("Entrar", use_container_width=True, type="primary"):
-            user_data = dict(creds).get(username)
+            user_data_raw = creds_dict.get(username)
+            user_data = dict(user_data_raw) if user_data_raw else None
             ok = False
             if user_data:
                 try:
@@ -490,10 +588,21 @@ def _run_auth() -> None:
                     ok = False
 
             if ok:
-                st.session_state["_authenticated"] = True
-                st.session_state["_username"] = username
-                st.session_state["_display_name"] = str(user_data.get("name", username))
-                st.session_state["_login_ts"] = _time.time()
+                remember_selector = None
+                if remember_me and remember_me_available:
+                    issued = _issue_remember_token(username)
+                    if issued:
+                        remember_selector, remember_cookie = issued
+                        _queue_cookie_write("set", remember_cookie)
+                else:
+                    _revoke_remember_token()
+                    _queue_cookie_write("clear")
+
+                _set_authenticated_session(
+                    username=username,
+                    display_name=str(user_data.get("name", username)),
+                    remember_selector=remember_selector,
+                )
                 st.session_state["_login_attempts"] = 0
                 st.session_state["_locked_until"] = 0.0
                 st.rerun()
@@ -518,6 +627,183 @@ def _get_db_engine():
     if not database_url:
         return None
     return create_engine(database_url, pool_pre_ping=True)
+
+
+def _ensure_auth_storage() -> bool:
+    engine = _get_db_engine()
+    if engine is None:
+        return False
+
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS bi_remember_tokens (
+                    selector TEXT PRIMARY KEY,
+                    username TEXT NOT NULL,
+                    token_hash TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    expires_at TIMESTAMPTZ NOT NULL,
+                    user_agent TEXT
+                )
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS idx_bi_remember_tokens_username
+                ON bi_remember_tokens (username)
+            """))
+            try:
+                conn.execute(text("ALTER TABLE bi_remember_tokens ENABLE ROW LEVEL SECURITY"))
+                conn.execute(text("""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                              FROM pg_policies
+                             WHERE schemaname = 'public'
+                               AND tablename = 'bi_remember_tokens'
+                               AND policyname = 'service_role full access on remember tokens'
+                        ) THEN
+                            CREATE POLICY "service_role full access on remember tokens"
+                              ON bi_remember_tokens
+                             FOR ALL
+                              TO service_role
+                           USING (true)
+                      WITH CHECK (true);
+                        END IF;
+                    END
+                    $$;
+                """))
+            except Exception:
+                pass
+    except Exception:
+        return False
+
+    return True
+
+
+def _issue_remember_token(username: str) -> tuple[str, str] | None:
+    engine = _get_db_engine()
+    if engine is None or not _ensure_auth_storage():
+        return None
+
+    selector = secrets.token_hex(12)
+    validator = secrets.token_hex(32)
+    token_hash = _hash_remember_validator(validator)
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM bi_remember_tokens WHERE expires_at <= NOW()"))
+        conn.execute(
+            text("""
+                INSERT INTO bi_remember_tokens (
+                    selector, username, token_hash, created_at, last_used_at, expires_at, user_agent
+                )
+                VALUES (
+                    :selector, :username, :token_hash, NOW(), NOW(),
+                    NOW() + (:remember_days || ' days')::interval, :user_agent
+                )
+            """),
+            {
+                "selector": selector,
+                "username": username,
+                "token_hash": token_hash,
+                "remember_days": REMEMBER_ME_DAYS,
+                "user_agent": _current_user_agent(),
+            },
+        )
+
+    return selector, f"{selector}.{validator}"
+
+
+def _revoke_remember_token(selector: str | None = None) -> None:
+    engine = _get_db_engine()
+    if engine is None or not _ensure_auth_storage():
+        return
+
+    effective_selector = selector or st.session_state.get("_remember_selector")
+    if not effective_selector:
+        parsed = _parse_remember_cookie(st.context.cookies.get(REMEMBER_COOKIE_NAME))
+        effective_selector = parsed[0] if parsed else None
+    if not effective_selector:
+        return
+
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
+            {"selector": effective_selector},
+        )
+
+
+def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
+    parsed = _parse_remember_cookie(st.context.cookies.get(REMEMBER_COOKIE_NAME))
+    if not parsed:
+        return False
+
+    engine = _get_db_engine()
+    if engine is None or not _ensure_auth_storage():
+        return False
+
+    selector, validator = parsed
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM bi_remember_tokens WHERE expires_at <= NOW()"))
+        row = conn.execute(
+            text("""
+                SELECT username, token_hash
+                  FROM bi_remember_tokens
+                 WHERE selector = :selector
+                   AND expires_at > NOW()
+            """),
+            {"selector": selector},
+        ).mappings().fetchone()
+
+        if not row:
+            _queue_cookie_write("clear")
+            return False
+
+        expected_hash = str(row["token_hash"] or "")
+        if not hmac.compare_digest(expected_hash, _hash_remember_validator(validator)):
+            conn.execute(
+                text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
+                {"selector": selector},
+            )
+            _queue_cookie_write("clear")
+            return False
+
+        username = str(row["username"])
+        user_data_raw = creds_dict.get(username)
+        user_data = dict(user_data_raw) if user_data_raw else None
+        if not user_data:
+            conn.execute(
+                text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
+                {"selector": selector},
+            )
+            _queue_cookie_write("clear")
+            return False
+
+        new_validator = secrets.token_hex(32)
+        conn.execute(
+            text("""
+                UPDATE bi_remember_tokens
+                   SET token_hash = :token_hash,
+                       last_used_at = NOW(),
+                       expires_at = NOW() + (:remember_days || ' days')::interval,
+                       user_agent = :user_agent
+                 WHERE selector = :selector
+            """),
+            {
+                "selector": selector,
+                "token_hash": _hash_remember_validator(new_validator),
+                "remember_days": REMEMBER_ME_DAYS,
+                "user_agent": _current_user_agent(),
+            },
+        )
+
+    _set_authenticated_session(
+        username=username,
+        display_name=str(user_data.get("name", username)),
+        remember_selector=selector,
+    )
+    _queue_cookie_write("set", f"{selector}.{new_validator}")
+    return True
 
 
 def _deserialize_json_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -2360,7 +2646,9 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
 
 # ─── Main ──────────────────────────────────────────────────────────────────────
 def main() -> None:
+    _flush_cookie_write()
     _run_auth()
+    _flush_cookie_write()
     data = load_data()
 
     # Guarda mínima: se as tabelas principais ainda não existem no banco, exibe aviso claro.
@@ -2497,8 +2785,9 @@ def main() -> None:
                 unsafe_allow_html=True,
             )
             if st.button("Sair", use_container_width=True):
-                for key in ["_authenticated", "_username", "_display_name"]:
-                    st.session_state.pop(key, None)
+                _revoke_remember_token()
+                _queue_cookie_write("clear")
+                _clear_authenticated_session()
                 st.rerun()
 
     kwargs = dict(data=data, ano=int(ano), mes=int(mes),
