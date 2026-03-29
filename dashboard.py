@@ -191,7 +191,8 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.06);
     transition: box-shadow 0.2s ease, transform 0.2s ease;
     min-width: 0;
-    overflow: hidden;
+    overflow: visible;
+    position: relative;
     /* Declara o card como container para que cqw funcione nos filhos */
     container-type: inline-size;
     container-name: kpi;
@@ -363,6 +364,29 @@ section[data-testid="stSidebar"] .stTextInput input {{
     border: 1px solid {BORDER} !important;
     background: {BG_CARD} !important;
     color: {TEXT_PRIMARY} !important;
+}}
+.kpi-info {{ position: relative; flex-shrink: 0; margin-left: 4px; }}
+.kpi-info > summary {{
+    list-style: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border-radius: 50%;
+    border: 1.5px solid #a0a0a8; color: #a0a0a8;
+    font-size: 0.58rem; font-weight: 700; font-style: italic;
+    user-select: none; margin-top: 1px;
+    transition: color 0.15s, border-color 0.15s;
+}}
+.kpi-info > summary::-webkit-details-marker {{ display: none; }}
+.kpi-info > summary:hover {{ color: {BLUE}; border-color: {BLUE}; }}
+.kpi-info > .kpi-info-box {{ display: none; }}
+.kpi-info[open] > .kpi-info-box {{
+    display: block; position: absolute;
+    right: 0; top: calc(100% + 4px); z-index: 9999;
+    background: #fff; border: 1px solid #d2d2d7; border-radius: 10px;
+    padding: 10px 12px; min-width: 200px; max-width: 260px;
+    font-size: 0.70rem; line-height: 1.55; color: #3d3d3f;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    white-space: normal; font-weight: 400;
+    text-transform: none; letter-spacing: 0;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -614,7 +638,7 @@ def fmt_brl(valor: float) -> str:
     return f"{sinal}{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
-def kpi_card(label: str, valor: float | str, prefix: str = "R$ ", cor: str = "normal") -> str:
+def kpi_card(label: str, valor: float | str, prefix: str = "R$ ", cor: str = "normal", info: str = "") -> str:
     if isinstance(valor, str):
         val_html = f'<div class="kpi-value neutro">{valor}</div>'
     else:
@@ -626,9 +650,20 @@ def kpi_card(label: str, valor: float | str, prefix: str = "R$ ", cor: str = "no
         else:
             css = ""
         val_html = f'<div class="kpi-value {css}">{prefix}{val_fmt}</div>'
+    info_html = ""
+    if info:
+        info_html = (
+            f'<details class="kpi-info">'
+            f'<summary>i</summary>'
+            f'<div class="kpi-info-box">{info}</div>'
+            f'</details>'
+        )
     return f"""
     <div class="kpi-card">
-        <div class="kpi-label">{label}</div>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div class="kpi-label" style="min-width:0;flex:1;">{label}</div>
+            {info_html}
+        </div>
         {val_html}
     </div>"""
 
@@ -1366,17 +1401,27 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
 
     # ── Linha 1: fotografia atual ─────────────────────────────────────────────
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.markdown(kpi_card("Saldo de Caixa Atual",  m["saldo_atual"]),              unsafe_allow_html=True)
-    c2.markdown(kpi_card("Entradas de Caixa",     m["entradas"], cor="positivo"), unsafe_allow_html=True)
-    c3.markdown(kpi_card("Saidas de Caixa",       m["saidas"],   cor="negativo"), unsafe_allow_html=True)
-    c4.markdown(kpi_card("Caixa Liquido",         m["liquido"],  cor="auto"),     unsafe_allow_html=True)
+    c1.markdown(kpi_card("Saldo de Caixa Atual",  m["saldo_atual"],
+        info="Soma dos saldos atuais de todas as contas bancárias. Atualizado a cada execução do ETL. Não responde a filtros de categoria ou centro."),
+        unsafe_allow_html=True)
+    c2.markdown(kpi_card("Entradas de Caixa",     m["entradas"], cor="positivo",
+        info="Estimativa híbrida: receitas já recebidas (base pagamento, até ontem) + receitas pendentes com vencimento no mês (base vencimento, a partir de hoje)."),
+        unsafe_allow_html=True)
+    c3.markdown(kpi_card("Saidas de Caixa",       m["saidas"],   cor="negativo",
+        info="Estimativa híbrida: despesas já pagas (base pagamento, até ontem) + despesas pendentes com vencimento no mês (base vencimento, a partir de hoje)."),
+        unsafe_allow_html=True)
+    c4.markdown(kpi_card("Caixa Liquido",         m["liquido"],  cor="auto",
+        info="Entradas menos Saídas do período. Positivo indica geração de caixa; negativo indica consumo."),
+        unsafe_allow_html=True)
     c5.markdown(kpi_card(
         "Runway",
         f"{m['runway']} dias" if m["runway"] < 999 else "Sem previsao",
         prefix="", cor="neutro",
+        info="Dias que o saldo atual sustenta as despesas comprometidas futuras. Calculado sem filtros — considera a empresa inteira.",
     ), unsafe_allow_html=True)
-    c6.markdown(kpi_card("Necessidade de Funding", m["funding_date"], prefix="", cor="neutro"),
-                unsafe_allow_html=True)
+    c6.markdown(kpi_card("Necessidade de Funding", m["funding_date"], prefix="", cor="neutro",
+        info="Data estimada em que o caixa se esgota com base nas saídas comprometidas. Exibe \"Sem previsão\" se não há risco iminente. Sem filtros."),
+        unsafe_allow_html=True)
 
     # ── Linha 2: Receitas ─────────────────────────────────────────────────────
     st.markdown(
@@ -1385,9 +1430,15 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
         unsafe_allow_html=True,
     )
     r1, r2, r3 = st.columns(3)
-    r1.markdown(kpi_card("Receitas em Aberto",    m["rec_aberto"],   cor="positivo"), unsafe_allow_html=True)
-    r2.markdown(kpi_card("Receitas Realizadas",   m["rec_realizado"], cor="positivo"), unsafe_allow_html=True)
-    r3.markdown(kpi_card("Contas a Receber Vencidas", m["cr_vencidas"], cor="negativo"), unsafe_allow_html=True)
+    r1.markdown(kpi_card("Receitas em Aberto",    m["rec_aberto"],   cor="positivo",
+        info="CR não liquidadas com vencimento entre hoje e o fim do mês. Mostra o que ainda será recebido no período."),
+        unsafe_allow_html=True)
+    r2.markdown(kpi_card("Receitas Realizadas",   m["rec_realizado"], cor="positivo",
+        info="Receitas efetivamente recebidas no mês (data de pagamento registrada). Responde aos filtros ativos."),
+        unsafe_allow_html=True)
+    r3.markdown(kpi_card("Contas a Receber Vencidas", m["cr_vencidas"], cor="negativo",
+        info="CR vencidas antes de hoje e ainda em aberto. Indica inadimplência ou atraso de clientes. Sem filtros."),
+        unsafe_allow_html=True)
 
     # ── Linha 3: Despesas ─────────────────────────────────────────────────────
     st.markdown(
@@ -1396,9 +1447,15 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
         unsafe_allow_html=True,
     )
     d1, d2, d3 = st.columns(3)
-    d1.markdown(kpi_card("Despesas em Aberto",    m["des_aberto"],   cor="negativo"), unsafe_allow_html=True)
-    d2.markdown(kpi_card("Despesas Realizadas",   m["des_realizado"], cor="negativo"), unsafe_allow_html=True)
-    d3.markdown(kpi_card("Contas a Pagar Vencidas", m["cp_vencidas"], cor="negativo"), unsafe_allow_html=True)
+    d1.markdown(kpi_card("Despesas em Aberto",    m["des_aberto"],   cor="negativo",
+        info="CP não liquidadas com vencimento entre hoje e o fim do mês. Compromissos financeiros pendentes no período."),
+        unsafe_allow_html=True)
+    d2.markdown(kpi_card("Despesas Realizadas",   m["des_realizado"], cor="negativo",
+        info="Despesas efetivamente pagas no mês (data de pagamento). Responde aos filtros ativos."),
+        unsafe_allow_html=True)
+    d3.markdown(kpi_card("Contas a Pagar Vencidas", m["cp_vencidas"], cor="negativo",
+        info="CP vencidas antes de hoje e ainda em aberto. Obrigações em atraso. Sem filtros."),
+        unsafe_allow_html=True)
 
     # ── Linha 3b: Estrutura das despesas realizadas (base caixa) ──────────────
     st.markdown(
@@ -1409,11 +1466,13 @@ def pagina_resumo(data: dict, ano: int, mes: int, centros_sel: list[str], centro
     )
     e1, e2, _ = st.columns(3)
     _rec_base = m["rec_realizado"] if m["rec_realizado"] else None
-    for _ecol, _elabel, _ev in [
-        (e1, "Desp. Operacional (CP)",     m["desp_oper_real"]),
-        (e2, "Desp. Nao-Operacional (CP)", m["desp_nao_oper_real"]),
+    for _ecol, _elabel, _ev, _einfo in [
+        (e1, "Desp. Operacional (CP)",     m["desp_oper_real"],
+         "CP com vencimento no mês: Custos Operacionais + Despesas Operacionais + Deduções da Receita Bruta (ISS, PIS, COFINS). Inclui pagas e pendentes."),
+        (e2, "Desp. Nao-Operacional (CP)", m["desp_nao_oper_real"],
+         "Tudo mais nas CP do mês: despesas financeiras, investimentos, IRPJ/CSLL e categorias sem mapeamento DRE. Complemento do Operacional."),
     ]:
-        _ecol.markdown(kpi_card(_elabel, _ev, cor="negativo"), unsafe_allow_html=True)
+        _ecol.markdown(kpi_card(_elabel, _ev, cor="negativo", info=_einfo), unsafe_allow_html=True)
         _pct_txt = f"{_ev / _rec_base * 100:.1f}% da Rec. Realizada" if _rec_base else "—"
         _ecol.markdown(
             f"<div style='font-size:0.68rem;color:{TEXT_SECONDARY};margin-top:-6px;"
@@ -1735,17 +1794,27 @@ def pagina_cenarios(data: dict, ano: int, mes: int, centros_sel: list[str], cent
     m = calc_resumo_cenario(data, ano, mes, centros_sel, cats_sel,
                             projecoes, excluidos, renov_ativa)
     c1, c2, c3, c4, c5, c6 = st.columns(6)
-    c1.markdown(kpi_card("Saldo de Caixa Atual", m["saldo_atual"]),              unsafe_allow_html=True)
-    c2.markdown(kpi_card("Entradas de Caixa",    m["entradas"], cor="positivo"), unsafe_allow_html=True)
-    c3.markdown(kpi_card("Saidas de Caixa",      m["saidas"],   cor="negativo"), unsafe_allow_html=True)
-    c4.markdown(kpi_card("Caixa Liquido",        m["liquido"],  cor="auto"),     unsafe_allow_html=True)
+    c1.markdown(kpi_card("Saldo de Caixa Atual", m["saldo_atual"],
+        info="Soma dos saldos atuais de todas as contas bancárias. Atualizado a cada execução do ETL. Não responde a filtros de categoria ou centro."),
+        unsafe_allow_html=True)
+    c2.markdown(kpi_card("Entradas de Caixa",    m["entradas"], cor="positivo",
+        info="Estimativa híbrida: receitas já recebidas (base pagamento, até ontem) + receitas pendentes com vencimento no mês (base vencimento, a partir de hoje)."),
+        unsafe_allow_html=True)
+    c3.markdown(kpi_card("Saidas de Caixa",      m["saidas"],   cor="negativo",
+        info="Estimativa híbrida: despesas já pagas (base pagamento, até ontem) + despesas pendentes com vencimento no mês (base vencimento, a partir de hoje)."),
+        unsafe_allow_html=True)
+    c4.markdown(kpi_card("Caixa Liquido",        m["liquido"],  cor="auto",
+        info="Entradas menos Saídas do período. Positivo indica geração de caixa; negativo indica consumo."),
+        unsafe_allow_html=True)
     c5.markdown(kpi_card(
         "Runway",
         f"{m['runway']} dias" if m["runway"] < 999 else "Sem previsao",
         prefix="", cor="neutro",
+        info="Dias que o saldo atual sustenta as despesas comprometidas futuras. Calculado sem filtros — considera a empresa inteira.",
     ), unsafe_allow_html=True)
-    c6.markdown(kpi_card("Necessidade de Funding", m["funding_date"], prefix="", cor="neutro"),
-                unsafe_allow_html=True)
+    c6.markdown(kpi_card("Necessidade de Funding", m["funding_date"], prefix="", cor="neutro",
+        info="Data estimada em que o caixa se esgota com base nas saídas comprometidas. Exibe \"Sem previsão\" se não há risco iminente. Sem filtros."),
+        unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2007,13 +2076,23 @@ def pagina_receita(data: dict, ano: int, mes: int, centros_sel: list[str], centr
     r = calc_receita(data, ano, mes, centros_sel, cats_sel)
 
     c1, c2, c3 = st.columns(3)
-    c1.markdown(kpi_card("MRR — Receita Recorrente Mensal", r["mrr"],           cor="positivo"), unsafe_allow_html=True)
-    c2.markdown(kpi_card("ARR — Receita Recorrente Anual",  r["arr"],           cor="positivo"), unsafe_allow_html=True)
-    c3.markdown(kpi_card("Receita Nao Recorrente",          r["nao_recorrente"]),                unsafe_allow_html=True)
+    c1.markdown(kpi_card("MRR — Receita Recorrente Mensal", r["mrr"],           cor="positivo",
+        info="Soma das vendas registradas no Conta Azul com data no mês selecionado. Representa a receita recorrente gerada por contratos."),
+        unsafe_allow_html=True)
+    c2.markdown(kpi_card("ARR — Receita Recorrente Anual",  r["arr"],           cor="positivo",
+        info="MRR × 12. Projeção anualizada da receita recorrente com base no mês atual."),
+        unsafe_allow_html=True)
+    c3.markdown(kpi_card("Receita Nao Recorrente",          r["nao_recorrente"],
+        info="Diferença entre o total de CR por competência e o MRR do período. Representa receitas pontuais ou avulsas fora dos contratos recorrentes."),
+        unsafe_allow_html=True)
 
     r1, r2, _ = st.columns(3)
-    r1.markdown(kpi_card("Ticket Medio por Cliente", r["ticket_medio"],          cor="positivo"), unsafe_allow_html=True)
-    r2.markdown(kpi_card("Clientes Ativos no Mes",   str(r["n_clientes"]), prefix="", cor="neutro"), unsafe_allow_html=True)
+    r1.markdown(kpi_card("Ticket Medio por Cliente", r["ticket_medio"],          cor="positivo",
+        info="MRR dividido pelo número de clientes únicos com venda no mês. Indica o valor médio de receita recorrente gerada por cliente ativo."),
+        unsafe_allow_html=True)
+    r2.markdown(kpi_card("Clientes Ativos no Mes",   str(r["n_clientes"]), prefix="", cor="neutro",
+        info="Clientes distintos com pelo menos uma venda registrada no mês (base fato_vendas)."),
+        unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
     render_chart(fig_mrr(r["mrr_serie"], ano))
@@ -2214,14 +2293,26 @@ def pagina_dre(data: dict, ano: int, mes: int, centros_sel: list[str], centro_la
         </div>
         <div style="display:flex;flex-direction:column;gap:12px;">
             <div class="kpi-card" style="flex:1;margin:0;">
-                <div class="kpi-label">Despesas Operacionais</div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div class="kpi-label" style="min-width:0;flex:1;">Despesas Operacionais</div>
+                    <details class="kpi-info">
+                        <summary>i</summary>
+                        <div class="kpi-info-box">Despesas operacionais por competência no ano, mapeadas pelo DRE do Conta Azul. Inclui G&amp;A, marketing, tecnologia, pró-labore e similares. Não inclui Custos de Serviço (CSP).</div>
+                    </details>
+                </div>
                 <div class="kpi-value {_cor_oper}">{_dre_fmt_brl(d["despesas_operacionais"])}</div>
                 <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
                     {_dre_pct(d["despesas_operacionais"], rb)} da Receita Bruta
                 </div>
             </div>
             <div class="kpi-card" style="flex:1;margin:0;">
-                <div class="kpi-label">Despesas Nao-Operacionais</div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div class="kpi-label" style="min-width:0;flex:1;">Despesas Nao-Operacionais</div>
+                    <details class="kpi-info">
+                        <summary>i</summary>
+                        <div class="kpi-info-box">Despesas fora do core operacional no ano: financeiras, investimentos, IRPJ/CSLL e categorias sem mapeamento DRE. Complemento das Despesas Operacionais.</div>
+                    </details>
+                </div>
                 <div class="kpi-value {_cor_nao}">{_dre_fmt_brl(despesa_nao_oper)}</div>
                 <div style="font-size:0.72rem;color:{TEXT_SECONDARY};margin-top:4px;">
                     {_dre_pct(despesa_nao_oper, rb)} da Receita Bruta
