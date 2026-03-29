@@ -274,14 +274,14 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     display: none !important;
 }}
 
-/* Botão de configurações — pequeno, fixado no canto superior direito */
+/* Botão de configurações — fixado no canto superior direito */
 [data-testid="stPopoverButton"] {{
     position: fixed !important;
     top: 0.50rem !important;
     right: 0.75rem !important;
     left: auto !important;
     z-index: 999999 !important;
-    width: 2rem !important;
+    width: 2.8rem !important;
     height: 2rem !important;
     min-width: 0 !important;
     overflow: hidden !important;
@@ -289,7 +289,7 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     background: transparent !important;
     border: 1px solid {P["BORDER"]} !important;
     border-radius: 8px !important;
-    padding: 0 0 0 0.35rem !important;
+    padding: 0 0 0 0.75rem !important;
     color: {P["TEXT_SECONDARY"]} !important;
     font-size: 0.95rem !important;
     line-height: 2rem !important;
@@ -299,6 +299,14 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     background: {P["BG_CARD"]} !important;
     border-color: {P["TEXT_SECONDARY"]} !important;
     color: {P["TEXT_PRIMARY"]} !important;
+}}
+/* Painel do popover — abre próximo ao botão no canto direito */
+[data-testid="stPopover"] {{
+    position: fixed !important;
+    top: 2.8rem !important;
+    right: 0.75rem !important;
+    left: auto !important;
+    z-index: 999998 !important;
 }}
 /* Zera a altura do wrapper do popover no DOM para não empurrar o conteúdo */
 [data-testid="element-container"]:has([data-testid="stPopoverButton"]) {{
