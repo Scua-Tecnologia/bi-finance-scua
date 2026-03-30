@@ -309,7 +309,8 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     color: {P["TEXT_PRIMARY"]} !important;
 }}
 /* Painel do popover de configurações — reposicionado via JS (inline styles override CSS) */
-[data-baseweb="popover"]:has([data-testid="stPopover"]) {{
+/* O BaseWeb aplica posição no filho direto, não no container externo */
+[data-baseweb="popover"]:has([data-testid="stPopover"]) > * {{
     position: fixed !important;
     right: 0.75rem !important;
     left: auto !important;
@@ -443,11 +444,12 @@ def _inject_theme_js() -> None:
     // Reposiciona apenas o painel de configurações (⚙) para o canto superior direito.
     // Usa retry porque o React popula o conteúdo após o elemento ser adicionado ao DOM.
     function applySettingsStyle(panel) {{
-        panel.style.setProperty('position', 'fixed', 'important');
-        panel.style.setProperty('right', '0.75rem', 'important');
-        panel.style.setProperty('left', 'auto', 'important');
-        panel.style.setProperty('top', '2.75rem', 'important');
-        panel.style.setProperty('transform', 'none', 'important');
+        var target = panel.children[0] || panel;
+        target.style.setProperty('position', 'fixed', 'important');
+        target.style.setProperty('right', '0.75rem', 'important');
+        target.style.setProperty('left', 'auto', 'important');
+        target.style.setProperty('top', '2.75rem', 'important');
+        target.style.setProperty('transform', 'none', 'important');
     }}
     function tryFixPanel(panel, attempts) {{
         if (panel.querySelector('[data-testid="stPopover"]')) {{
@@ -464,15 +466,6 @@ def _inject_theme_js() -> None:
     var _popObserver = new MutationObserver(fixPopoverPosition);
     _popObserver.observe(_rootDoc.body, {{ childList: true, subtree: true }});
 
-    // Fecha tooltip de info (details.kpi-info) ao clicar em qualquer lugar fora
-    if (!_rootDoc._kpiInfoListenerAdded) {{
-        _rootDoc._kpiInfoListenerAdded = true;
-        _rootDoc.addEventListener('click', function(e) {{
-            _rootDoc.querySelectorAll('details.kpi-info[open]').forEach(function(d) {{
-                if (!d.contains(e.target)) d.removeAttribute('open');
-            }});
-        }});
-    }}
 }})();
 </script>
 """)
@@ -1100,7 +1093,8 @@ def kpi_card(label: str, valor: float | str, prefix: str = "R$ ", cor: str = "no
     if info:
         info_html = (
             f'<details class="kpi-info">'
-            f'<summary>i</summary>'
+            f'<summary onclick="if(!this.parentElement.open){{var me=this.parentElement;var h=function(ev){{if(!me.contains(ev.target)){{me.removeAttribute(\'open\');document.removeEventListener(\'click\',h,true);}}}};setTimeout(function(){{document.addEventListener(\'click\',h,true);}},0);}}">'
+            f'i</summary>'
             f'<div class="kpi-info-box">{info}</div>'
             f'</details>'
         )
