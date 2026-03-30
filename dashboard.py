@@ -312,6 +312,7 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
 [data-baseweb="popover"]:has([data-testid="stPopover"]) {{
     right: 0.75rem !important;
     left: auto !important;
+    top: 2.75rem !important;
     transform: none !important;
 }}
 /* Zera a altura do wrapper do popover no DOM para não empurrar o conteúdo */
@@ -402,7 +403,7 @@ section[data-testid="stSidebar"] .stTextInput input {{
 .kpi-info > .kpi-info-box {{ display: none; }}
 .kpi-info[open] > .kpi-info-box {{
     display: block; position: absolute;
-    right: 0; top: calc(100% + 4px); z-index: 9999;
+    right: 0; bottom: calc(100% + 4px); z-index: 9999;
     background: {P["BG_CARD"]}; border: 1px solid {P["BORDER"]}; border-radius: 10px;
     padding: 10px 12px; min-width: 200px; max-width: 260px;
     font-size: 0.70rem; line-height: 1.55; color: {P["TEXT_PRIMARY"]};
@@ -433,7 +434,7 @@ def _inject_theme_js() -> None:
         document.cookie = "app_dark_scheme=" + dark + "; path=/; max-age=86400; SameSite=Lax";
     }}
 
-    // Reposiciona apenas o painel de configurações (⚙) para o canto direito
+    // Reposiciona apenas o painel de configurações (⚙) para o canto superior direito
     // (Streamlit usa inline styles via JS que sobrepõem CSS puro)
     // Selectboxes e outros popovers nativos NÃO são afetados
     function fixPopoverPosition() {{
@@ -442,12 +443,22 @@ def _inject_theme_js() -> None:
             if (panel.querySelector('[data-testid="stPopover"]')) {{
                 panel.style.setProperty('right', '0.75rem', 'important');
                 panel.style.setProperty('left', 'auto', 'important');
+                panel.style.setProperty('top', '2.75rem', 'important');
                 panel.style.setProperty('transform', 'none', 'important');
             }}
         }});
     }}
     const observer = new MutationObserver(fixPopoverPosition);
     observer.observe(document.body, {{ childList: true, subtree: true }});
+
+    // Fecha tooltip de info (details.kpi-info) ao clicar fora
+    document.addEventListener('click', function(e) {{
+        document.querySelectorAll('details.kpi-info[open]').forEach(function(d) {{
+            if (!d.contains(e.target)) {{
+                d.removeAttribute('open');
+            }}
+        }});
+    }});
 }})();
 </script>
 """)
