@@ -308,8 +308,8 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     border-color: {P["TEXT_SECONDARY"]} !important;
     color: {P["TEXT_PRIMARY"]} !important;
 }}
-/* Painel do popover — reposicionado via JS (inline styles override CSS) */
-[data-baseweb="popover"] {{
+/* Painel do popover de configurações — reposicionado via JS (inline styles override CSS) */
+[data-baseweb="popover"]:has([data-testid="stPopover"]) {{
     right: 0.75rem !important;
     left: auto !important;
     transform: none !important;
@@ -433,14 +433,17 @@ def _inject_theme_js() -> None:
         document.cookie = "app_dark_scheme=" + dark + "; path=/; max-age=86400; SameSite=Lax";
     }}
 
-    // Reposiciona o painel do popover para o canto direito
+    // Reposiciona apenas o painel de configurações (⚙) para o canto direito
     // (Streamlit usa inline styles via JS que sobrepõem CSS puro)
+    // Selectboxes e outros popovers nativos NÃO são afetados
     function fixPopoverPosition() {{
         const panels = document.querySelectorAll('[data-baseweb="popover"]');
         panels.forEach(function(panel) {{
-            panel.style.setProperty('right', '0.75rem', 'important');
-            panel.style.setProperty('left', 'auto', 'important');
-            panel.style.setProperty('transform', 'none', 'important');
+            if (panel.querySelector('[data-testid="stPopover"]')) {{
+                panel.style.setProperty('right', '0.75rem', 'important');
+                panel.style.setProperty('left', 'auto', 'important');
+                panel.style.setProperty('transform', 'none', 'important');
+            }}
         }});
     }}
     const observer = new MutationObserver(fixPopoverPosition);
