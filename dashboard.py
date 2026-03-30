@@ -308,22 +308,20 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
     border-color: {P["TEXT_SECONDARY"]} !important;
     color: {P["TEXT_PRIMARY"]} !important;
 }}
-/* Painel do popover de configurações — reposicionado via JS (inline styles override CSS) */
-/* O BaseWeb aplica posição no filho direto, não no container externo */
-[data-baseweb="popover"]:has([data-testid="stPopover"]) > * {{
+/* Container pai do botão ⚙ fixado no canto superior direito.
+   Popper.js usa getBoundingClientRect() do container pai como âncora —
+   ao fixá-lo aqui, o painel abre naturalmente abaixo do ícone. */
+[data-testid="element-container"]:has([data-testid="stPopoverButton"]) {{
     position: fixed !important;
+    top: 0.50rem !important;
     right: 0.75rem !important;
     left: auto !important;
-    top: 2.75rem !important;
-    transform: none !important;
-}}
-/* Zera a altura do wrapper do popover no DOM para não empurrar o conteúdo */
-[data-testid="element-container"]:has([data-testid="stPopoverButton"]) {{
-    height: 0 !important;
-    min-height: 0 !important;
+    width: 3.9rem !important;
+    height: 2rem !important;
     overflow: visible !important;
     margin: 0 !important;
     padding: 0 !important;
+    z-index: 999998 !important;
 }}
 
 /* Divider */
@@ -391,8 +389,8 @@ section[data-testid="stSidebar"] .stTextInput input {{
     color: {P["TEXT_PRIMARY"]} !important;
 }}
 .kpi-info {{ position: relative; flex-shrink: 0; margin-left: 4px; }}
-.kpi-info > summary {{
-    list-style: none; cursor: pointer;
+.kpi-info-btn {{
+    cursor: pointer; background: none; padding: 0;
     display: flex; align-items: center; justify-content: center;
     width: 15px; height: 15px; border-radius: 50%;
     border: 1.5px solid #a0a0a8; color: #a0a0a8;
@@ -400,10 +398,11 @@ section[data-testid="stSidebar"] .stTextInput input {{
     user-select: none; margin-top: 1px;
     transition: color 0.15s, border-color 0.15s;
 }}
-.kpi-info > summary::-webkit-details-marker {{ display: none; }}
-.kpi-info > summary:hover {{ color: {P["BLUE"]}; border-color: {P["BLUE"]}; }}
-.kpi-info > .kpi-info-box {{ display: none; }}
-.kpi-info[open] > .kpi-info-box {{
+.kpi-info-btn:hover {{ color: {P["BLUE"]}; border-color: {P["BLUE"]}; }}
+.kpi-info-btn:focus {{ outline: none; color: {P["BLUE"]}; border-color: {P["BLUE"]}; }}
+.kpi-info-box {{ display: none; }}
+.kpi-info-box:focus {{ outline: none; }}
+.kpi-info:focus-within .kpi-info-box {{
     display: block; position: absolute;
     right: 0; bottom: calc(100% + 4px); z-index: 9999;
     background: {P["BG_CARD"]}; border: 1px solid {P["BORDER"]}; border-radius: 10px;
@@ -436,35 +435,6 @@ def _inject_theme_js() -> None:
         document.cookie = "app_dark_scheme=" + dark + "; path=/; max-age=86400; SameSite=Lax";
     }}
 
-    // Usa o document da página principal (st.html roda em iframe)
-    var _rootDoc = (function() {{
-        try {{ return window.parent.document; }} catch(e) {{ return document; }}
-    }})();
-
-    // Reposiciona apenas o painel de configurações (⚙) para o canto superior direito.
-    // Usa retry porque o React popula o conteúdo após o elemento ser adicionado ao DOM.
-    function applySettingsStyle(panel) {{
-        var target = panel.children[0] || panel;
-        target.style.setProperty('position', 'fixed', 'important');
-        target.style.setProperty('right', '0.75rem', 'important');
-        target.style.setProperty('left', 'auto', 'important');
-        target.style.setProperty('top', '2.75rem', 'important');
-        target.style.setProperty('transform', 'none', 'important');
-    }}
-    function tryFixPanel(panel, attempts) {{
-        if (panel.querySelector('[data-testid="stPopover"]')) {{
-            applySettingsStyle(panel);
-        }} else if (attempts > 0) {{
-            setTimeout(function() {{ tryFixPanel(panel, attempts - 1); }}, 50);
-        }}
-    }}
-    function fixPopoverPosition() {{
-        _rootDoc.querySelectorAll('[data-baseweb="popover"]').forEach(function(panel) {{
-            tryFixPanel(panel, 10);
-        }});
-    }}
-    var _popObserver = new MutationObserver(fixPopoverPosition);
-    _popObserver.observe(_rootDoc.body, {{ childList: true, subtree: true }});
 
 }})();
 </script>
@@ -1092,11 +1062,10 @@ def kpi_card(label: str, valor: float | str, prefix: str = "R$ ", cor: str = "no
     info_html = ""
     if info:
         info_html = (
-            f'<details class="kpi-info">'
-            f'<summary onclick="if(!this.parentElement.open){{var me=this.parentElement;var h=function(ev){{if(!me.contains(ev.target)){{me.removeAttribute(\'open\');document.removeEventListener(\'click\',h,true);}}}};setTimeout(function(){{document.addEventListener(\'click\',h,true);}},0);}}">'
-            f'i</summary>'
-            f'<div class="kpi-info-box">{info}</div>'
-            f'</details>'
+            f'<span class="kpi-info">'
+            f'<button class="kpi-info-btn" type="button">i</button>'
+            f'<div class="kpi-info-box" tabindex="-1">{info}</div>'
+            f'</span>'
         )
     return f"""
     <div class="kpi-card">
