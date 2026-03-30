@@ -310,6 +310,7 @@ section[data-testid="stSidebar"] .stSelectbox svg {{
 }}
 /* Painel do popover de configurações — reposicionado via JS (inline styles override CSS) */
 [data-baseweb="popover"]:has([data-testid="stPopover"]) {{
+    position: fixed !important;
     right: 0.75rem !important;
     left: auto !important;
     top: 2.75rem !important;
@@ -434,31 +435,44 @@ def _inject_theme_js() -> None:
         document.cookie = "app_dark_scheme=" + dark + "; path=/; max-age=86400; SameSite=Lax";
     }}
 
-    // Reposiciona apenas o painel de configurações (⚙) para o canto superior direito
-    // (Streamlit usa inline styles via JS que sobrepõem CSS puro)
-    // Selectboxes e outros popovers nativos NÃO são afetados
+    // Usa o document da página principal (st.html roda em iframe)
+    var _rootDoc = (function() {{
+        try {{ return window.parent.document; }} catch(e) {{ return document; }}
+    }})();
+
+    // Reposiciona apenas o painel de configurações (⚙) para o canto superior direito.
+    // Usa retry porque o React popula o conteúdo após o elemento ser adicionado ao DOM.
+    function applySettingsStyle(panel) {{
+        panel.style.setProperty('position', 'fixed', 'important');
+        panel.style.setProperty('right', '0.75rem', 'important');
+        panel.style.setProperty('left', 'auto', 'important');
+        panel.style.setProperty('top', '2.75rem', 'important');
+        panel.style.setProperty('transform', 'none', 'important');
+    }}
+    function tryFixPanel(panel, attempts) {{
+        if (panel.querySelector('[data-testid="stPopover"]')) {{
+            applySettingsStyle(panel);
+        }} else if (attempts > 0) {{
+            setTimeout(function() {{ tryFixPanel(panel, attempts - 1); }}, 50);
+        }}
+    }}
     function fixPopoverPosition() {{
-        const panels = document.querySelectorAll('[data-baseweb="popover"]');
-        panels.forEach(function(panel) {{
-            if (panel.querySelector('[data-testid="stPopover"]')) {{
-                panel.style.setProperty('right', '0.75rem', 'important');
-                panel.style.setProperty('left', 'auto', 'important');
-                panel.style.setProperty('top', '2.75rem', 'important');
-                panel.style.setProperty('transform', 'none', 'important');
-            }}
+        _rootDoc.querySelectorAll('[data-baseweb="popover"]').forEach(function(panel) {{
+            tryFixPanel(panel, 10);
         }});
     }}
-    const observer = new MutationObserver(fixPopoverPosition);
-    observer.observe(document.body, {{ childList: true, subtree: true }});
+    var _popObserver = new MutationObserver(fixPopoverPosition);
+    _popObserver.observe(_rootDoc.body, {{ childList: true, subtree: true }});
 
-    // Fecha tooltip de info (details.kpi-info) ao clicar fora
-    document.addEventListener('click', function(e) {{
-        document.querySelectorAll('details.kpi-info[open]').forEach(function(d) {{
-            if (!d.contains(e.target)) {{
-                d.removeAttribute('open');
-            }}
+    // Fecha tooltip de info (details.kpi-info) ao clicar em qualquer lugar fora
+    if (!_rootDoc._kpiInfoListenerAdded) {{
+        _rootDoc._kpiInfoListenerAdded = true;
+        _rootDoc.addEventListener('click', function(e) {{
+            _rootDoc.querySelectorAll('details.kpi-info[open]').forEach(function(d) {{
+                if (!d.contains(e.target)) d.removeAttribute('open');
+            }});
         }});
-    }});
+    }}
 }})();
 </script>
 """)
