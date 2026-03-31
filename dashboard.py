@@ -2847,9 +2847,6 @@ def _render_etl_trigger() -> None:
         status_label = label_map.get(status, status)
         data_str = (run.get("created_at") or "")[:10]
         st.caption(f"Último: {status_label}" + (f" — {data_str}" if data_str else ""))
-        if run.get("html_url"):
-            st.link_button("Ver no GitHub Actions", run["html_url"], use_container_width=True)
-
     if st.button(
         "Executar ETL agora",
         disabled=btn_disabled,
