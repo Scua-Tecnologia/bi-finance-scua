@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
 import logging
 import os
@@ -1083,8 +1084,8 @@ def kpi_card(label: str, valor: float | str, prefix: str = "R$ ", cor: str = "no
 
 
 def filter_bar_html(ano: int, mes: int, centro: str, cat_label: str = "") -> str:
-    centro_txt = centro    if centro    else "Todos os centros"
-    cat_txt    = cat_label if cat_label else "Todas as categorias"
+    centro_txt = html.escape(centro)    if centro    else "Todos os centros"
+    cat_txt    = html.escape(cat_label) if cat_label else "Todas as categorias"
     return f"""
     <div class="filter-bar">
         <span class="filter-bar-label">Filtros ativos</span>
@@ -3050,7 +3051,7 @@ def main() -> None:
         # ── Logout (exibido apenas quando auth está ativa) ────────────────────
         if st.session_state.get("_username"):
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-            nome_exib = st.session_state.get("_display_name", st.session_state["_username"])
+            nome_exib = html.escape(str(st.session_state.get("_display_name", st.session_state["_username"])))
             st.markdown(
                 f"<div style='font-size:0.70rem;color:{P['TEXT_SECONDARY']};margin-bottom:8px;line-height:1.5;'>"
                 f"Conectado como<br>"
