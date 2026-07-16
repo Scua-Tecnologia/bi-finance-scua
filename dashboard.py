@@ -545,42 +545,6 @@ def _clear_authenticated_session() -> None:
         st.session_state.pop(key, None)
 
 
-def _queue_cookie_write(action: str, value: str | None = None) -> None:
-    st.session_state["_auth_cookie_op"] = {"action": action, "value": value or ""}
-
-
-def _flush_cookie_write() -> None:
-    op = st.session_state.pop("_auth_cookie_op", None)
-    if not op:
-        return
-
-    cookie_name = json.dumps(REMEMBER_COOKIE_NAME)
-    if op["action"] == "set":
-        cookie_value = json.dumps(op["value"])
-        payload = f"""
-<div style="display:none"></div>
-<script>
-(() => {{
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = {cookie_name} + "=" + encodeURIComponent({cookie_value}) +
-    "; path=/; max-age={REMEMBER_ME_MAX_AGE_SECONDS}; SameSite=Lax" + secure;
-}})();
-</script>
-"""
-    else:
-        payload = f"""
-<div style="display:none"></div>
-<script>
-(() => {{
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = {cookie_name} +
-    "=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax" + secure;
-}})();
-</script>
-"""
-    st.html(payload, unsafe_allow_javascript=True)
-
-
 def _hash_remember_validator(validator: str) -> str:
     return hashlib.sha256(validator.encode("utf-8")).hexdigest()
 
@@ -672,7 +636,6 @@ def _run_auth() -> None:
 
     if _try_restore_session_from_cookie(creds_dict):
         return
-    _flush_cookie_write()
 
     # ── Lockout por tentativas excessivas ─────────────────────────────────────
     _MAX_ATTEMPTS = 5
@@ -2931,7 +2894,6 @@ def main() -> None:
     _inject_theme_js()                       # detecta prefers-color-scheme + escreve cookie
     _cookie_manager().get_all()   # monta o componente e popula cookies neste ciclo
     _run_auth()
-    _flush_cookie_write()
     data = load_data()
 
     # Guarda mínima: se as tabelas principais ainda não existem no banco, exibe aviso claro.
