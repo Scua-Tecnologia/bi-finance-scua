@@ -12,6 +12,7 @@ import secrets
 import time
 import urllib.parse
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -727,14 +728,19 @@ def _run_auth() -> None:
 
             if ok:
                 remember_selector = None
+                cm = _cookie_manager()
                 if remember_me and remember_me_available:
                     issued = _issue_remember_token(username)
                     if issued:
                         remember_selector, remember_cookie = issued
-                        _queue_cookie_write("set", remember_cookie)
+                        cm.set(
+                            REMEMBER_COOKIE_NAME, remember_cookie,
+                            expires_at=datetime.now() + timedelta(days=REMEMBER_ME_DAYS),
+                            same_site="lax", secure=True, key="set_remember",
+                        )
                 else:
                     _revoke_remember_token()
-                    _queue_cookie_write("clear")
+                    cm.delete(REMEMBER_COOKIE_NAME, key="del_remember")
 
                 _set_authenticated_session(
                     username=username,
@@ -859,7 +865,7 @@ def _revoke_remember_token(selector: str | None = None) -> None:
 
     effective_selector = selector or st.session_state.get("_remember_selector")
     if not effective_selector:
-        parsed = _parse_remember_cookie(st.context.cookies.get(REMEMBER_COOKIE_NAME))
+        parsed = _parse_remember_cookie(_read_cookie(REMEMBER_COOKIE_NAME))
         effective_selector = parsed[0] if parsed else None
     if not effective_selector:
         return
@@ -872,7 +878,7 @@ def _revoke_remember_token(selector: str | None = None) -> None:
 
 
 def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
-    parsed = _parse_remember_cookie(st.context.cookies.get(REMEMBER_COOKIE_NAME))
+    parsed = _parse_remember_cookie(_read_cookie(REMEMBER_COOKIE_NAME))
     if not parsed:
         return False
 
@@ -894,7 +900,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
         ).mappings().fetchone()
 
         if not row:
-            _queue_cookie_write("clear")
+            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         expected_hash = str(row["token_hash"] or "")
@@ -903,7 +909,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
                 text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
                 {"selector": selector},
             )
-            _queue_cookie_write("clear")
+            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         username = str(row["username"])
@@ -914,7 +920,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
                 text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
                 {"selector": selector},
             )
-            _queue_cookie_write("clear")
+            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         new_validator = secrets.token_hex(32)
@@ -940,7 +946,11 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
         display_name=str(user_data.get("name", username)),
         remember_selector=selector,
     )
-    _queue_cookie_write("set", f"{selector}.{new_validator}")
+    _cookie_manager().set(
+        REMEMBER_COOKIE_NAME, f"{selector}.{new_validator}",
+        expires_at=datetime.now() + timedelta(days=REMEMBER_ME_DAYS),
+        same_site="lax", secure=True, key="set_restore",
+    )
     return True
 
 
@@ -3063,7 +3073,7 @@ def main() -> None:
             )
             if st.button("Sair", use_container_width=True):
                 _revoke_remember_token()
-                _queue_cookie_write("clear")
+                _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_remember_logout")
                 _clear_authenticated_session()
                 st.rerun()
 
