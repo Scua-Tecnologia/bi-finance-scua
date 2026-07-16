@@ -6,19 +6,28 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import html
 import json
+import logging
 import os
 import secrets
 import time
 import urllib.parse
 import uuid
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
 import requests as _requests
 import streamlit as st
+import extra_streamlit_components as stx
 from sqlalchemy import create_engine, text
+
+from contaazul_bi.logging_utils import setup_logging
+
+setup_logging(os.environ.get("LOG_LEVEL", "INFO"))  # idempotente (force=True)
+logger = logging.getLogger("dashboard")
 
 # ─── Configuracao da pagina ────────────────────────────────────────────────────
 st.set_page_config(
@@ -70,6 +79,7 @@ def _get_palette() -> dict:
     try:
         dark_cookie = st.context.cookies.get("app_dark_scheme", "0")
     except Exception:
+        logger.debug("falha ao ler cookie de tema app_dark_scheme", exc_info=True)
         dark_cookie = "0"
     return _PALETTE_DARK if dark_cookie == "1" else _PALETTE_LIGHT
 
@@ -81,6 +91,7 @@ def _restore_theme_from_cookie() -> None:
     try:
         pref = st.context.cookies.get("app_theme_pref", "sistema")
     except Exception:
+        logger.debug("falha ao ler cookie de tema app_theme_pref", exc_info=True)
         pref = "sistema"
     if pref in ("sistema", "claro", "escuro"):
         st.session_state["_theme_pref"] = pref
@@ -412,6 +423,16 @@ section[data-testid="stSidebar"] .stTextInput input {{
     white-space: normal; font-weight: 400;
     text-transform: none; letter-spacing: 0;
 }}
+
+/* ── Tela de login ────────────────────────────────────────────────────────── */
+.login-brand {{ text-align: center; margin-bottom: 22px; }}
+.login-brand .logo {{
+    font-size: 2rem; font-weight: 800; letter-spacing: -.03em; color: {P["BLUE"]};
+}}
+.login-brand .prod {{
+    font-size: .72rem; letter-spacing: .18em; text-transform: uppercase;
+    color: {P["TEXT_SECONDARY"]}; font-weight: 600; margin-top: 4px;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -450,7 +471,6 @@ try:
     REMEMBER_ME_DAYS = max(1, int(os.environ.get("BI_REMEMBER_ME_DAYS", "30")))
 except ValueError:
     REMEMBER_ME_DAYS = 30
-REMEMBER_ME_MAX_AGE_SECONDS = REMEMBER_ME_DAYS * 24 * 3600
 
 
 def _load_cenarios() -> dict:
@@ -471,7 +491,7 @@ def _load_cenarios() -> dict:
                     "contratos_excluidos": row["contratos_excluidos"] if isinstance(row["contratos_excluidos"], list) else json.loads(row["contratos_excluidos"] or "[]"),
                 }
         except Exception:
-            pass
+            logger.exception("falha ao carregar cenários do banco; usando default")
         return default
 
     # Fallback: arquivo local (desenvolvimento)
@@ -480,6 +500,7 @@ def _load_cenarios() -> dict:
     try:
         return json.loads(CENARIOS_PATH.read_text(encoding="utf-8"))
     except Exception:
+        logger.exception("falha ao ler cenários do arquivo local; usando default")
         return default
 
 
@@ -505,8 +526,9 @@ def _save_cenarios(c: dict) -> None:
                         "e": json.dumps(c.get("contratos_excluidos", []), ensure_ascii=False, default=str),
                     },
                 )
-        except Exception as exc:
-            st.error(f"Erro ao salvar cenários no banco: {exc}")
+        except Exception:
+            logger.exception("erro ao salvar cenários no banco")
+            st.error("Não foi possível salvar os cenários agora. Tente novamente ou contate o suporte.")
         return
 
     # Fallback: arquivo local (desenvolvimento)
@@ -543,42 +565,6 @@ def _clear_authenticated_session() -> None:
         st.session_state.pop(key, None)
 
 
-def _queue_cookie_write(action: str, value: str | None = None) -> None:
-    st.session_state["_auth_cookie_op"] = {"action": action, "value": value or ""}
-
-
-def _flush_cookie_write() -> None:
-    op = st.session_state.pop("_auth_cookie_op", None)
-    if not op:
-        return
-
-    cookie_name = json.dumps(REMEMBER_COOKIE_NAME)
-    if op["action"] == "set":
-        cookie_value = json.dumps(op["value"])
-        payload = f"""
-<div style="display:none"></div>
-<script>
-(() => {{
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = {cookie_name} + "=" + encodeURIComponent({cookie_value}) +
-    "; path=/; max-age={REMEMBER_ME_MAX_AGE_SECONDS}; SameSite=Lax" + secure;
-}})();
-</script>
-"""
-    else:
-        payload = f"""
-<div style="display:none"></div>
-<script>
-(() => {{
-  const secure = window.location.protocol === "https:" ? "; Secure" : "";
-  document.cookie = {cookie_name} +
-    "=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax" + secure;
-}})();
-</script>
-"""
-    st.html(payload, unsafe_allow_javascript=True)
-
-
 def _hash_remember_validator(validator: str) -> str:
     return hashlib.sha256(validator.encode("utf-8")).hexdigest()
 
@@ -587,6 +573,7 @@ def _current_user_agent() -> str:
     try:
         return str(st.context.headers.get("User-Agent", ""))[:512]
     except Exception:
+        logger.debug("falha ao ler User-Agent do contexto", exc_info=True)
         return ""
 
 
@@ -598,6 +585,21 @@ def _parse_remember_cookie(raw_cookie: str | None) -> tuple[str, str] | None:
     if not sep or not selector or not validator:
         return None
     return selector, validator
+
+
+@st.cache_resource
+def _cookie_manager() -> "stx.CookieManager":
+    # key fixa evita múltiplas instâncias do componente na árvore
+    return stx.CookieManager(key="bi_finance_cookies")
+
+
+def _read_cookie(name: str) -> str | None:
+    """Lê um cookie do navegador via componente bidirecional (confiável em reruns)."""
+    try:
+        return _cookie_manager().get(name)
+    except Exception:
+        logger.debug("falha ao ler cookie %s via CookieManager", name, exc_info=True)
+        return None
 
 # ─── Constantes ────────────────────────────────────────────────────────────────
 MESES_PT = {
@@ -643,6 +645,7 @@ def _run_auth() -> None:
         creds_dict = dict(creds)
         has_creds = len(creds_dict) > 0
     except Exception:
+        logger.exception("falha ao carregar credenciais de st.secrets")
         creds_dict = {}
         has_creds = False
 
@@ -656,7 +659,6 @@ def _run_auth() -> None:
 
     if _try_restore_session_from_cookie(creds_dict):
         return
-    _flush_cookie_write()
 
     # ── Lockout por tentativas excessivas ─────────────────────────────────────
     _MAX_ATTEMPTS = 5
@@ -675,29 +677,31 @@ def _run_auth() -> None:
         st.info("Sua sessão expirou. Faça login novamente.")
 
     # ── Tela de login ─────────────────────────────────────────────────────────
-    _, col, _ = st.columns([1, 1, 1])
+    _, col, _ = st.columns([1, 1.15, 1])
     with col:
         remember_me_available = _ensure_auth_storage()
-        st.markdown(
-            f"<div style='text-align:center;padding:48px 0 28px 0;'>"
-            f"<div style='font-size:1.60rem;font-weight:700;color:{_P()["TEXT_PRIMARY"]};"
-            f"letter-spacing:-0.02em;'>BI Finance</div>"
-            f"<div style='font-size:0.875rem;color:{_P()["TEXT_SECONDARY"]};margin-top:4px;'>Scua</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        username = st.text_input("Usuário", key="_login_username")
-        password = st.text_input("Senha", type="password", key="_login_password")
-        remember_me = st.checkbox(
-            f"Lembrar de mim neste navegador por {REMEMBER_ME_DAYS} dias",
-            value=False,
-            disabled=not remember_me_available,
-            help="Mantém este navegador autorizado mesmo após fechar a aba. Evite usar em máquinas compartilhadas.",
-        )
-        if not remember_me_available:
-            st.caption("O recurso de lembrar de mim só fica disponível quando o banco de dados está configurado.")
+        with st.container(border=True):
+            st.markdown(
+                "<div class='login-brand'>"
+                "<div class='logo'>Scua</div>"
+                "<div class='prod'>Finance · BI</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            with st.form("login_form"):
+                username = st.text_input("Usuário", key="_login_username")
+                password = st.text_input("Senha", type="password", key="_login_password")
+                remember_me = st.checkbox(
+                    f"Lembrar de mim neste navegador por {REMEMBER_ME_DAYS} dias",
+                    value=False,
+                    disabled=not remember_me_available,
+                    help="Mantém este navegador autorizado mesmo após fechar a aba. Evite usar em máquinas compartilhadas.",
+                )
+                submitted = st.form_submit_button("Entrar", use_container_width=True, type="primary")
+            if not remember_me_available:
+                st.caption("O recurso de lembrar de mim só fica disponível quando o banco de dados está configurado.")
 
-        if st.button("Entrar", use_container_width=True, type="primary"):
+        if submitted:
             user_data_raw = creds_dict.get(username)
             user_data = dict(user_data_raw) if user_data_raw else None
             ok = False
@@ -708,18 +712,24 @@ def _run_auth() -> None:
                         str(user_data.get("password_hash", "")).encode("utf-8"),
                     )
                 except Exception:
+                    logger.debug("erro ao verificar senha (hash inválido?)", exc_info=True)
                     ok = False
 
             if ok:
                 remember_selector = None
+                cm = _cookie_manager()
                 if remember_me and remember_me_available:
                     issued = _issue_remember_token(username)
                     if issued:
                         remember_selector, remember_cookie = issued
-                        _queue_cookie_write("set", remember_cookie)
+                        cm.set(
+                            REMEMBER_COOKIE_NAME, remember_cookie,
+                            expires_at=datetime.now() + timedelta(days=REMEMBER_ME_DAYS),
+                            same_site="lax", secure=True, key="set_remember",
+                        )
                 else:
                     _revoke_remember_token()
-                    _queue_cookie_write("clear")
+                    cm.delete(REMEMBER_COOKIE_NAME, key="del_remember")
 
                 _set_authenticated_session(
                     username=username,
@@ -753,6 +763,11 @@ def _get_db_engine():
 
 
 def _ensure_auth_storage() -> bool:
+    # A DDL abaixo é idempotente; memoiza o sucesso em session_state para não
+    # repeti-la a cada rerun/chamada da sessão. Uma falha transitória NÃO é
+    # memoizada (retenta na próxima vez).
+    if st.session_state.get("_auth_storage_ready"):
+        return True
     engine = _get_db_engine()
     if engine is None:
         return False
@@ -797,10 +812,12 @@ def _ensure_auth_storage() -> bool:
                     $$;
                 """))
             except Exception:
-                pass
+                logger.debug("falha ao aplicar RLS/policy em bi_remember_tokens", exc_info=True)
     except Exception:
+        logger.exception("falha ao garantir armazenamento de auth (bi_remember_tokens)")
         return False
 
+    st.session_state["_auth_storage_ready"] = True
     return True
 
 
@@ -844,7 +861,7 @@ def _revoke_remember_token(selector: str | None = None) -> None:
 
     effective_selector = selector or st.session_state.get("_remember_selector")
     if not effective_selector:
-        parsed = _parse_remember_cookie(st.context.cookies.get(REMEMBER_COOKIE_NAME))
+        parsed = _parse_remember_cookie(_read_cookie(REMEMBER_COOKIE_NAME))
         effective_selector = parsed[0] if parsed else None
     if not effective_selector:
         return
@@ -857,7 +874,7 @@ def _revoke_remember_token(selector: str | None = None) -> None:
 
 
 def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
-    parsed = _parse_remember_cookie(st.context.cookies.get(REMEMBER_COOKIE_NAME))
+    parsed = _parse_remember_cookie(_read_cookie(REMEMBER_COOKIE_NAME))
     if not parsed:
         return False
 
@@ -879,7 +896,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
         ).mappings().fetchone()
 
         if not row:
-            _queue_cookie_write("clear")
+            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         expected_hash = str(row["token_hash"] or "")
@@ -888,7 +905,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
                 text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
                 {"selector": selector},
             )
-            _queue_cookie_write("clear")
+            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         username = str(row["username"])
@@ -899,7 +916,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
                 text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
                 {"selector": selector},
             )
-            _queue_cookie_write("clear")
+            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         new_validator = secrets.token_hex(32)
@@ -925,7 +942,11 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
         display_name=str(user_data.get("name", username)),
         remember_selector=selector,
     )
-    _queue_cookie_write("set", f"{selector}.{new_validator}")
+    _cookie_manager().set(
+        REMEMBER_COOKIE_NAME, f"{selector}.{new_validator}",
+        expires_at=datetime.now() + timedelta(days=REMEMBER_ME_DAYS),
+        same_site="lax", secure=True, key="set_restore",
+    )
     return True
 
 
@@ -963,10 +984,11 @@ def _load_from_database(engine) -> dict[str, pd.DataFrame]:
         try:
             df = pd.read_sql_table(table_name, engine, schema="bi_analytics")
             frames[key] = _deserialize_json_columns(df)
-        except Exception as exc:
+        except Exception:
+            logger.exception("tabela %s não encontrada ou erro ao ler do banco", table_name)
             missing.append(table_name)
             st.warning(
-                f"Tabela `{table_name}` não encontrada no banco: {exc}\n\n"
+                f"Tabela `{table_name}` não encontrada no banco.\n\n"
                 "Execute o pipeline ETL para popular o Supabase."
             )
 
@@ -1010,8 +1032,9 @@ def load_data() -> dict[str, pd.DataFrame]:
                 continue
             try:
                 frames[k] = pd.read_parquet(path)
-            except Exception as exc:
-                st.error(f"Erro ao ler `{filename}`: {exc}")
+            except Exception:
+                logger.exception("erro ao ler parquet %s", filename)
+                st.error(f"Erro ao ler `{filename}`. Verifique os arquivos de dados.")
                 st.stop()
 
         if missing:
@@ -1078,8 +1101,8 @@ def kpi_card(label: str, valor: float | str, prefix: str = "R$ ", cor: str = "no
 
 
 def filter_bar_html(ano: int, mes: int, centro: str, cat_label: str = "") -> str:
-    centro_txt = centro    if centro    else "Todos os centros"
-    cat_txt    = cat_label if cat_label else "Todas as categorias"
+    centro_txt = html.escape(centro)    if centro    else "Todos os centros"
+    cat_txt    = html.escape(cat_label) if cat_label else "Todas as categorias"
     return f"""
     <div class="filter-bar">
         <span class="filter-bar-label">Filtros ativos</span>
@@ -1968,6 +1991,7 @@ def _projecoes_serie_mensal(projecoes: list, ano: int) -> pd.DataFrame:
             fim = pd.Timestamp(p["data_fim"]).replace(day=1)
             val = float(p["valor_mensal"])
         except Exception:
+            logger.debug("projeção manual ignorada (dados inválidos)", exc_info=True)
             continue
         for m in idx:
             m_ts = pd.Timestamp(ano, m, 1)
@@ -2122,6 +2146,7 @@ def calc_proj_4_meses_cenario(
                 fim = pd.Timestamp(proj["data_fim"]).replace(day=1)
                 v = float(proj["valor_mensal"])
             except Exception:
+                logger.debug("projeção manual ignorada (dados inválidos)", exc_info=True)
                 continue
             if ini <= m_ts <= fim:
                 base[p_str] += v if proj["tipo"] == "entrada" else -v
@@ -2159,6 +2184,7 @@ def calc_resumo_cenario(
             fim = pd.Timestamp(p["data_fim"]).replace(day=1)
             val = float(p["valor_mensal"])
         except Exception:
+            logger.debug("projeção manual ignorada (dados inválidos)", exc_info=True)
             continue
         if ini <= m_ts <= fim:
             if p["tipo"] == "entrada":
@@ -2786,6 +2812,7 @@ def _ga_secrets() -> dict | None:
             ref=str(s.get("workflow_ref", "main")),
         )
     except Exception:
+        logger.debug("github_actions não configurado em st.secrets", exc_info=True)
         return None
 
 
@@ -2804,6 +2831,7 @@ def _ga_get_latest_run(owner: str, repo: str, workflow_id: str, token: str) -> d
         runs = r.json().get("workflow_runs", [])
         return runs[0] if runs else None
     except Exception:
+        logger.debug("falha ao consultar último run do GitHub Actions", exc_info=True)
         return None
 
 
@@ -2819,6 +2847,7 @@ def _ga_dispatch(owner: str, repo: str, workflow_id: str, ref: str, token: str) 
         )
         return r.status_code == 204
     except Exception:
+        logger.exception("falha ao disparar workflow do GitHub Actions")
         return False
 
 
@@ -2873,6 +2902,7 @@ def _is_admin() -> bool:
     try:
         return bool(st.secrets["credentials"][username].get("admin", False))
     except Exception:
+        logger.debug("falha ao verificar flag admin", exc_info=True)
         return False
 
 
@@ -2904,9 +2934,8 @@ def main() -> None:
     st.session_state["_active_palette"] = P  # disponibiliza para render_chart()
     _inject_css(P)                           # injeta CSS antes do login (estiliza tela de login)
     _inject_theme_js()                       # detecta prefers-color-scheme + escreve cookie
-    _flush_cookie_write()
+    _cookie_manager().get_all()   # monta o componente e popula cookies neste ciclo
     _run_auth()
-    _flush_cookie_write()
     data = load_data()
 
     # Guarda mínima: se as tabelas principais ainda não existem no banco, exibe aviso claro.
@@ -3039,7 +3068,7 @@ def main() -> None:
         # ── Logout (exibido apenas quando auth está ativa) ────────────────────
         if st.session_state.get("_username"):
             st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
-            nome_exib = st.session_state.get("_display_name", st.session_state["_username"])
+            nome_exib = html.escape(str(st.session_state.get("_display_name", st.session_state["_username"])))
             st.markdown(
                 f"<div style='font-size:0.70rem;color:{P['TEXT_SECONDARY']};margin-bottom:8px;line-height:1.5;'>"
                 f"Conectado como<br>"
@@ -3048,7 +3077,7 @@ def main() -> None:
             )
             if st.button("Sair", use_container_width=True):
                 _revoke_remember_token()
-                _queue_cookie_write("clear")
+                _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_remember_logout")
                 _clear_authenticated_session()
                 st.rerun()
 
