@@ -18,6 +18,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests as _requests
 import streamlit as st
+import extra_streamlit_components as stx
 from sqlalchemy import create_engine, text
 
 # ─── Configuracao da pagina ────────────────────────────────────────────────────
@@ -598,6 +599,20 @@ def _parse_remember_cookie(raw_cookie: str | None) -> tuple[str, str] | None:
     if not sep or not selector or not validator:
         return None
     return selector, validator
+
+
+@st.cache_resource
+def _cookie_manager() -> "stx.CookieManager":
+    # key fixa evita múltiplas instâncias do componente na árvore
+    return stx.CookieManager(key="bi_finance_cookies")
+
+
+def _read_cookie(name: str) -> str | None:
+    """Lê um cookie do navegador via componente bidirecional (confiável em reruns)."""
+    try:
+        return _cookie_manager().get(name)
+    except Exception:
+        return None
 
 # ─── Constantes ────────────────────────────────────────────────────────────────
 MESES_PT = {
@@ -2904,7 +2919,7 @@ def main() -> None:
     st.session_state["_active_palette"] = P  # disponibiliza para render_chart()
     _inject_css(P)                           # injeta CSS antes do login (estiliza tela de login)
     _inject_theme_js()                       # detecta prefers-color-scheme + escreve cookie
-    _flush_cookie_write()
+    _cookie_manager().get_all()   # monta o componente e popula cookies neste ciclo
     _run_auth()
     _flush_cookie_write()
     data = load_data()
