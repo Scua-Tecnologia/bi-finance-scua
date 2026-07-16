@@ -12,7 +12,7 @@ from urllib.parse import parse_qs, urlparse
 import pandas as pd
 
 from contaazul_bi.client import ContaAzulClient
-from contaazul_bi.config import Settings
+from contaazul_bi.config import Settings, PAID_STATUSES_INSTALLMENTS as PAID_STATUSES
 from contaazul_bi.extractors.contracts import ContractsExtractor
 from contaazul_bi.extractors.finance import FinanceExtractor
 from contaazul_bi.extractors.invoices import InvoiceExtractor
@@ -25,9 +25,6 @@ from contaazul_bi.utils import dump_json, write_dataframe
 
 
 logger = logging.getLogger(__name__)
-
-# Status de parcelas consideradas quitadas/pagas
-PAID_STATUSES: frozenset[str] = frozenset({"ACQUITTED", "PAGO", "RECEBIDO", "QUITADO"})
 
 
 class ContaAzulETLPipeline:

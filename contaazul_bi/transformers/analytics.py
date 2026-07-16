@@ -7,13 +7,11 @@ from dataclasses import dataclass
 import pandas as pd
 from pandas.api.types import is_list_like
 
+from contaazul_bi.config import PAID_STATUSES_ANALYTICS as PAID_STATUSES
 from contaazul_bi.utils import coalesce_columns, safe_to_datetime
 
 
 logger = logging.getLogger(__name__)
-
-# Status de parcelas considerados quitados/pagos (deve ser mantido em sincronia com main.py)
-PAID_STATUSES: frozenset[str] = frozenset({"PAGO", "RECEBIDO", "QUITADO"})
 
 
 @dataclass(slots=True)

@@ -11,6 +11,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# ── Status considerados pagos/quitados ──────────────────────────────────────
+# ATENÇÃO: os dois conjuntos divergem INTENCIONALMENTE (ou é divergência
+# histórica sob revisão — confirmar com o negócio antes de unificar):
+#   - parcelas (installments, em main.py) tratam ACQUITTED como pago;
+#   - a análise de fluxo (analytics.py) NÃO inclui ACQUITTED no conjunto pago.
+# Centralizados aqui como fonte única para evitar drift entre os módulos.
+# NÃO unifique os dois sem validar o impacto nos resultados do ETL.
+PAID_STATUSES_INSTALLMENTS: frozenset[str] = frozenset({"ACQUITTED", "PAGO", "RECEBIDO", "QUITADO"})
+PAID_STATUSES_ANALYTICS: frozenset[str] = frozenset({"PAGO", "RECEBIDO", "QUITADO"})
+
+
 @dataclass(slots=True)
 class Settings:
     client_id: str
