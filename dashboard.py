@@ -751,7 +751,15 @@ def _get_db_engine():
     return create_engine(database_url, pool_pre_ping=True)
 
 
+_auth_storage_ready = False
+
+
 def _ensure_auth_storage() -> bool:
+    # A DDL abaixo é idempotente; após o primeiro sucesso, evita repeti-la a
+    # cada rerun do Streamlit. Uma falha transitória NÃO é memoizada (retenta).
+    global _auth_storage_ready
+    if _auth_storage_ready:
+        return True
     engine = _get_db_engine()
     if engine is None:
         return False
@@ -801,6 +809,7 @@ def _ensure_auth_storage() -> bool:
         logger.exception("falha ao garantir armazenamento de auth (bi_remember_tokens)")
         return False
 
+    _auth_storage_ready = True
     return True
 
 
