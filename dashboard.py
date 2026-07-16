@@ -78,6 +78,7 @@ def _get_palette() -> dict:
     try:
         dark_cookie = st.context.cookies.get("app_dark_scheme", "0")
     except Exception:
+        logger.debug("falha ao ler cookie de tema app_dark_scheme", exc_info=True)
         dark_cookie = "0"
     return _PALETTE_DARK if dark_cookie == "1" else _PALETTE_LIGHT
 
@@ -89,6 +90,7 @@ def _restore_theme_from_cookie() -> None:
     try:
         pref = st.context.cookies.get("app_theme_pref", "sistema")
     except Exception:
+        logger.debug("falha ao ler cookie de tema app_theme_pref", exc_info=True)
         pref = "sistema"
     if pref in ("sistema", "claro", "escuro"):
         st.session_state["_theme_pref"] = pref
@@ -479,7 +481,7 @@ def _load_cenarios() -> dict:
                     "contratos_excluidos": row["contratos_excluidos"] if isinstance(row["contratos_excluidos"], list) else json.loads(row["contratos_excluidos"] or "[]"),
                 }
         except Exception:
-            pass
+            logger.exception("falha ao carregar cenários do banco; usando default")
         return default
 
     # Fallback: arquivo local (desenvolvimento)
@@ -488,6 +490,7 @@ def _load_cenarios() -> dict:
     try:
         return json.loads(CENARIOS_PATH.read_text(encoding="utf-8"))
     except Exception:
+        logger.exception("falha ao ler cenários do arquivo local; usando default")
         return default
 
 
@@ -559,6 +562,7 @@ def _current_user_agent() -> str:
     try:
         return str(st.context.headers.get("User-Agent", ""))[:512]
     except Exception:
+        logger.debug("falha ao ler User-Agent do contexto", exc_info=True)
         return ""
 
 
@@ -583,6 +587,7 @@ def _read_cookie(name: str) -> str | None:
     try:
         return _cookie_manager().get(name)
     except Exception:
+        logger.debug("falha ao ler cookie %s via CookieManager", name, exc_info=True)
         return None
 
 # ─── Constantes ────────────────────────────────────────────────────────────────
@@ -629,6 +634,7 @@ def _run_auth() -> None:
         creds_dict = dict(creds)
         has_creds = len(creds_dict) > 0
     except Exception:
+        logger.exception("falha ao carregar credenciais de st.secrets")
         creds_dict = {}
         has_creds = False
 
@@ -693,6 +699,7 @@ def _run_auth() -> None:
                         str(user_data.get("password_hash", "")).encode("utf-8"),
                     )
                 except Exception:
+                    logger.debug("erro ao verificar senha (hash inválido?)", exc_info=True)
                     ok = False
 
             if ok:
@@ -787,8 +794,9 @@ def _ensure_auth_storage() -> bool:
                     $$;
                 """))
             except Exception:
-                pass
+                logger.debug("falha ao aplicar RLS/policy em bi_remember_tokens", exc_info=True)
     except Exception:
+        logger.exception("falha ao garantir armazenamento de auth (bi_remember_tokens)")
         return False
 
     return True
@@ -1962,6 +1970,7 @@ def _projecoes_serie_mensal(projecoes: list, ano: int) -> pd.DataFrame:
             fim = pd.Timestamp(p["data_fim"]).replace(day=1)
             val = float(p["valor_mensal"])
         except Exception:
+            logger.debug("projeção manual ignorada (dados inválidos)", exc_info=True)
             continue
         for m in idx:
             m_ts = pd.Timestamp(ano, m, 1)
@@ -2116,6 +2125,7 @@ def calc_proj_4_meses_cenario(
                 fim = pd.Timestamp(proj["data_fim"]).replace(day=1)
                 v = float(proj["valor_mensal"])
             except Exception:
+                logger.debug("projeção manual ignorada (dados inválidos)", exc_info=True)
                 continue
             if ini <= m_ts <= fim:
                 base[p_str] += v if proj["tipo"] == "entrada" else -v
@@ -2153,6 +2163,7 @@ def calc_resumo_cenario(
             fim = pd.Timestamp(p["data_fim"]).replace(day=1)
             val = float(p["valor_mensal"])
         except Exception:
+            logger.debug("projeção manual ignorada (dados inválidos)", exc_info=True)
             continue
         if ini <= m_ts <= fim:
             if p["tipo"] == "entrada":
@@ -2780,6 +2791,7 @@ def _ga_secrets() -> dict | None:
             ref=str(s.get("workflow_ref", "main")),
         )
     except Exception:
+        logger.debug("github_actions não configurado em st.secrets", exc_info=True)
         return None
 
 
@@ -2798,6 +2810,7 @@ def _ga_get_latest_run(owner: str, repo: str, workflow_id: str, token: str) -> d
         runs = r.json().get("workflow_runs", [])
         return runs[0] if runs else None
     except Exception:
+        logger.debug("falha ao consultar último run do GitHub Actions", exc_info=True)
         return None
 
 
@@ -2813,6 +2826,7 @@ def _ga_dispatch(owner: str, repo: str, workflow_id: str, ref: str, token: str) 
         )
         return r.status_code == 204
     except Exception:
+        logger.exception("falha ao disparar workflow do GitHub Actions")
         return False
 
 
@@ -2867,6 +2881,7 @@ def _is_admin() -> bool:
     try:
         return bool(st.secrets["credentials"][username].get("admin", False))
     except Exception:
+        logger.debug("falha ao verificar flag admin", exc_info=True)
         return False
 
 
