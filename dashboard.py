@@ -516,8 +516,9 @@ def _save_cenarios(c: dict) -> None:
                         "e": json.dumps(c.get("contratos_excluidos", []), ensure_ascii=False, default=str),
                     },
                 )
-        except Exception as exc:
-            st.error(f"Erro ao salvar cenários no banco: {exc}")
+        except Exception:
+            logger.exception("erro ao salvar cenários no banco")
+            st.error("Não foi possível salvar os cenários agora. Tente novamente ou contate o suporte.")
         return
 
     # Fallback: arquivo local (desenvolvimento)
@@ -965,10 +966,11 @@ def _load_from_database(engine) -> dict[str, pd.DataFrame]:
         try:
             df = pd.read_sql_table(table_name, engine, schema="bi_analytics")
             frames[key] = _deserialize_json_columns(df)
-        except Exception as exc:
+        except Exception:
+            logger.exception("tabela %s não encontrada ou erro ao ler do banco", table_name)
             missing.append(table_name)
             st.warning(
-                f"Tabela `{table_name}` não encontrada no banco: {exc}\n\n"
+                f"Tabela `{table_name}` não encontrada no banco.\n\n"
                 "Execute o pipeline ETL para popular o Supabase."
             )
 
@@ -1012,8 +1014,9 @@ def load_data() -> dict[str, pd.DataFrame]:
                 continue
             try:
                 frames[k] = pd.read_parquet(path)
-            except Exception as exc:
-                st.error(f"Erro ao ler `{filename}`: {exc}")
+            except Exception:
+                logger.exception("erro ao ler parquet %s", filename)
+                st.error(f"Erro ao ler `{filename}`. Verifique os arquivos de dados.")
                 st.stop()
 
         if missing:
