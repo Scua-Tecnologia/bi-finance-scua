@@ -698,29 +698,31 @@ def _run_auth() -> None:
         st.info("Sua sessão expirou. Faça login novamente.")
 
     # ── Tela de login ─────────────────────────────────────────────────────────
-    _, col, _ = st.columns([1, 1, 1])
+    _, col, _ = st.columns([1, 1.15, 1])
     with col:
         remember_me_available = _ensure_auth_storage()
-        st.markdown(
-            f"<div style='text-align:center;padding:48px 0 28px 0;'>"
-            f"<div style='font-size:1.60rem;font-weight:700;color:{_P()["TEXT_PRIMARY"]};"
-            f"letter-spacing:-0.02em;'>BI Finance</div>"
-            f"<div style='font-size:0.875rem;color:{_P()["TEXT_SECONDARY"]};margin-top:4px;'>Scua</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
-        username = st.text_input("Usuário", key="_login_username")
-        password = st.text_input("Senha", type="password", key="_login_password")
-        remember_me = st.checkbox(
-            f"Lembrar de mim neste navegador por {REMEMBER_ME_DAYS} dias",
-            value=False,
-            disabled=not remember_me_available,
-            help="Mantém este navegador autorizado mesmo após fechar a aba. Evite usar em máquinas compartilhadas.",
-        )
-        if not remember_me_available:
-            st.caption("O recurso de lembrar de mim só fica disponível quando o banco de dados está configurado.")
+        with st.container(border=True):
+            st.markdown(
+                "<div class='login-brand'>"
+                "<div class='logo'>Scua</div>"
+                "<div class='prod'>Finance · BI</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+            with st.form("login_form"):
+                username = st.text_input("Usuário", key="_login_username")
+                password = st.text_input("Senha", type="password", key="_login_password")
+                remember_me = st.checkbox(
+                    f"Lembrar de mim neste navegador por {REMEMBER_ME_DAYS} dias",
+                    value=False,
+                    disabled=not remember_me_available,
+                    help="Mantém este navegador autorizado mesmo após fechar a aba. Evite usar em máquinas compartilhadas.",
+                )
+                submitted = st.form_submit_button("Entrar", use_container_width=True, type="primary")
+            if not remember_me_available:
+                st.caption("O recurso de lembrar de mim só fica disponível quando o banco de dados está configurado.")
 
-        if st.button("Entrar", use_container_width=True, type="primary"):
+        if submitted:
             user_data_raw = creds_dict.get(username)
             user_data = dict(user_data_raw) if user_data_raw else None
             ok = False
