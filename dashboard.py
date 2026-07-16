@@ -587,10 +587,19 @@ def _parse_remember_cookie(raw_cookie: str | None) -> tuple[str, str] | None:
     return selector, validator
 
 
-@st.cache_resource
+_cookie_mgr_instance = None
+
+
 def _cookie_manager() -> "stx.CookieManager":
-    # key fixa evita múltiplas instâncias do componente na árvore
-    return stx.CookieManager(key="bi_finance_cookies")
+    # Instância única por execução do script. O módulo é reexecutado a cada
+    # rerun do Streamlit, então esta global reinicia por run — garantindo uma
+    # única instanciação do componente por run (sem DuplicateWidgetID).
+    # NÃO usar @st.cache_resource: o construtor renderiza um widget, o que é
+    # proibido dentro de funções cacheadas.
+    global _cookie_mgr_instance
+    if _cookie_mgr_instance is None:
+        _cookie_mgr_instance = stx.CookieManager(key="bi_finance_cookies")
+    return _cookie_mgr_instance
 
 
 def _read_cookie(name: str) -> str | None:
@@ -2934,7 +2943,7 @@ def main() -> None:
     st.session_state["_active_palette"] = P  # disponibiliza para render_chart()
     _inject_css(P)                           # injeta CSS antes do login (estiliza tela de login)
     _inject_theme_js()                       # detecta prefers-color-scheme + escreve cookie
-    _cookie_manager().get_all()   # monta o componente e popula cookies neste ciclo
+    _cookie_manager()   # instancia o componente cedo (monta + popula cookies deste run)
     _run_auth()
     data = load_data()
 
