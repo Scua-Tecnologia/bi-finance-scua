@@ -425,15 +425,6 @@ section[data-testid="stSidebar"] .stTextInput input {{
 }}
 
 /* ── Tela de login ────────────────────────────────────────────────────────── */
-.login-card {{
-    max-width: 380px;
-    margin: 6vh auto 0;
-    padding: 40px 36px;
-    background: {P["BG_CARD"]};
-    border: 1px solid {P["BORDER"]};
-    border-radius: 18px;
-    box-shadow: 0 1px 3px rgba(0,0,0,.06), 0 12px 40px rgba(0,0,0,.10);
-}}
 .login-brand {{ text-align: center; margin-bottom: 22px; }}
 .login-brand .logo {{
     font-size: 2rem; font-weight: 800; letter-spacing: -.03em; color: {P["BLUE"]};
@@ -441,17 +432,6 @@ section[data-testid="stSidebar"] .stTextInput input {{
 .login-brand .prod {{
     font-size: .72rem; letter-spacing: .18em; text-transform: uppercase;
     color: {P["TEXT_SECONDARY"]}; font-weight: 600; margin-top: 4px;
-}}
-/* Inputs da area principal (form de login) alinhados ao visual do app */
-.stApp [data-testid="stTextInput"] input {{
-    background: {P["BG_APP"]} !important;
-    border: 1px solid {P["BORDER"]} !important;
-    border-radius: 10px !important;
-    color: {P["TEXT_PRIMARY"]} !important;
-}}
-.stApp [data-testid="stTextInput"] input:focus {{
-    border-color: {P["BLUE"]} !important;
-    box-shadow: 0 0 0 3px rgba(0,70,150,.22) !important;
 }}
 </style>
 """, unsafe_allow_html=True)
@@ -491,7 +471,6 @@ try:
     REMEMBER_ME_DAYS = max(1, int(os.environ.get("BI_REMEMBER_ME_DAYS", "30")))
 except ValueError:
     REMEMBER_ME_DAYS = 30
-REMEMBER_ME_MAX_AGE_SECONDS = REMEMBER_ME_DAYS * 24 * 3600
 
 
 def _load_cenarios() -> dict:
@@ -783,14 +762,11 @@ def _get_db_engine():
     return create_engine(database_url, pool_pre_ping=True)
 
 
-_auth_storage_ready = False
-
-
 def _ensure_auth_storage() -> bool:
-    # A DDL abaixo é idempotente; após o primeiro sucesso, evita repeti-la a
-    # cada rerun do Streamlit. Uma falha transitória NÃO é memoizada (retenta).
-    global _auth_storage_ready
-    if _auth_storage_ready:
+    # A DDL abaixo é idempotente; memoiza o sucesso em session_state para não
+    # repeti-la a cada rerun/chamada da sessão. Uma falha transitória NÃO é
+    # memoizada (retenta na próxima vez).
+    if st.session_state.get("_auth_storage_ready"):
         return True
     engine = _get_db_engine()
     if engine is None:
@@ -841,7 +817,7 @@ def _ensure_auth_storage() -> bool:
         logger.exception("falha ao garantir armazenamento de auth (bi_remember_tokens)")
         return False
 
-    _auth_storage_ready = True
+    st.session_state["_auth_storage_ready"] = True
     return True
 
 
