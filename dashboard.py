@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
@@ -21,6 +22,11 @@ import requests as _requests
 import streamlit as st
 import extra_streamlit_components as stx
 from sqlalchemy import create_engine, text
+
+from contaazul_bi.logging_utils import setup_logging
+
+setup_logging(os.environ.get("LOG_LEVEL", "INFO"))  # idempotente (force=True)
+logger = logging.getLogger("dashboard")
 
 # ─── Configuracao da pagina ────────────────────────────────────────────────────
 st.set_page_config(
