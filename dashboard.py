@@ -643,6 +643,24 @@ def _set_cookie(name: str, value: str, key: str) -> None:
     except Exception:
         logger.debug("falha ao gravar cookie %s", name, exc_info=True)
 
+
+def _flush_pending_cookie_ops() -> None:
+    """Aplica gravação/remoção de cookie pendente em um run que NÃO chama
+    st.rerun em seguida.
+
+    O componente do CookieManager precisa de um ciclo de render completo para
+    efetivar a mudança no navegador. Se gravarmos o cookie logo antes de um
+    st.rerun (como acontecia no submit do login), o rerun aborta o script
+    antes do componente escrever o cookie — e o 'lembrar de mim' nunca
+    persiste. Por isso adiamos a escrita para o primeiro run já autenticado,
+    onde o app inteiro renderiza sem rerun logo em seguida.
+    """
+    pending = st.session_state.pop("_pending_remember_cookie", None)
+    if pending:
+        _set_cookie(REMEMBER_COOKIE_NAME, pending, key="set_remember")
+    if st.session_state.pop("_pending_remember_clear", False):
+        _delete_cookie(REMEMBER_COOKIE_NAME, key="del_remember")
+
 # ─── Constantes ────────────────────────────────────────────────────────────────
 MESES_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Marco", 4: "Abril",
@@ -679,6 +697,7 @@ def _run_auth() -> None:
             _clear_authenticated_session()
             session_expired = True
         else:
+            _flush_pending_cookie_ops()
             return
 
     # Tenta carregar credenciais do secrets.toml / variáveis de ambiente
@@ -759,19 +778,18 @@ def _run_auth() -> None:
 
             if ok:
                 remember_selector = None
-                cm = _cookie_manager()
                 if remember_me and remember_me_available:
                     issued = _issue_remember_token(username)
                     if issued:
                         remember_selector, remember_cookie = issued
-                        cm.set(
-                            REMEMBER_COOKIE_NAME, remember_cookie,
-                            expires_at=datetime.now() + timedelta(days=REMEMBER_ME_DAYS),
-                            same_site="lax", secure=True, key="set_remember",
-                        )
+                        # Adia a gravação do cookie: escrever agora e chamar
+                        # st.rerun() logo abaixo abortaria o componente antes
+                        # de ele persistir o cookie. Gravamos no próximo run
+                        # (já autenticado), via _flush_pending_cookie_ops().
+                        st.session_state["_pending_remember_cookie"] = remember_cookie
                 else:
                     _revoke_remember_token()
-                    _delete_cookie(REMEMBER_COOKIE_NAME, key="del_remember")
+                    st.session_state["_pending_remember_clear"] = True
 
                 _set_authenticated_session(
                     username=username,
