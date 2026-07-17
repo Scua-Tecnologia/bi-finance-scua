@@ -610,6 +610,39 @@ def _read_cookie(name: str) -> str | None:
         logger.debug("falha ao ler cookie %s via CookieManager", name, exc_info=True)
         return None
 
+
+def _delete_cookie(name: str, key: str) -> None:
+    """Remove um cookie com segurança.
+
+    O CookieManager do extra-streamlit-components faz `del self.cookies[name]`
+    ao apagar, o que estoura KeyError se o cookie não existe (ex.: primeiro
+    login sem 'lembrar de mim'). Só apagamos quando o cookie está presente e
+    engolimos qualquer erro residual para nunca quebrar o fluxo de login.
+    """
+    cm = _cookie_manager()
+    try:
+        if cm.get(name) is not None:
+            cm.delete(name, key=key)
+    except Exception:
+        logger.debug("falha ao remover cookie %s", name, exc_info=True)
+
+
+def _set_cookie(name: str, value: str, key: str) -> None:
+    """Grava um cookie de forma best-effort.
+
+    Se a gravação falhar (ex.: kwarg incompatível na versão do CookieManager),
+    apenas registra em log — o login continua funcionando, só sem persistir o
+    'lembrar de mim'. Nunca quebra o fluxo de autenticação.
+    """
+    try:
+        _cookie_manager().set(
+            name, value,
+            expires_at=datetime.now() + timedelta(days=REMEMBER_ME_DAYS),
+            same_site="lax", secure=True, key=key,
+        )
+    except Exception:
+        logger.debug("falha ao gravar cookie %s", name, exc_info=True)
+
 # ─── Constantes ────────────────────────────────────────────────────────────────
 MESES_PT = {
     1: "Janeiro", 2: "Fevereiro", 3: "Marco", 4: "Abril",
@@ -738,7 +771,7 @@ def _run_auth() -> None:
                         )
                 else:
                     _revoke_remember_token()
-                    cm.delete(REMEMBER_COOKIE_NAME, key="del_remember")
+                    _delete_cookie(REMEMBER_COOKIE_NAME, key="del_remember")
 
                 _set_authenticated_session(
                     username=username,
@@ -905,7 +938,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
         ).mappings().fetchone()
 
         if not row:
-            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
+            _delete_cookie(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         expected_hash = str(row["token_hash"] or "")
@@ -914,7 +947,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
                 text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
                 {"selector": selector},
             )
-            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
+            _delete_cookie(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         username = str(row["username"])
@@ -925,7 +958,7 @@ def _try_restore_session_from_cookie(creds_dict: dict[str, object]) -> bool:
                 text("DELETE FROM bi_remember_tokens WHERE selector = :selector"),
                 {"selector": selector},
             )
-            _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_restore")
+            _delete_cookie(REMEMBER_COOKIE_NAME, key="del_restore")
             return False
 
         new_validator = secrets.token_hex(32)
@@ -3086,7 +3119,7 @@ def main() -> None:
             )
             if st.button("Sair", use_container_width=True):
                 _revoke_remember_token()
-                _cookie_manager().delete(REMEMBER_COOKIE_NAME, key="del_remember_logout")
+                _delete_cookie(REMEMBER_COOKIE_NAME, key="del_remember_logout")
                 _clear_authenticated_session()
                 st.rerun()
 
