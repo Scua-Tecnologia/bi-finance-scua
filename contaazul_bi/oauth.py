@@ -253,6 +253,21 @@ class ContaAzulOAuthManager:
             data=data,
             timeout=self.settings.timeout_seconds,
         )
+        if not response.ok:
+            oauth_error, oauth_description = self._oauth_error_details(response)
+            logger.error(
+                "Falha ao trocar code por tokens (HTTP %s, oauth_error=%s, fingerprint=%s, redirect_uri=%s): %s",
+                response.status_code,
+                oauth_error or "N/A",
+                self.configuration_fingerprint(),
+                self.settings.redirect_uri,
+                response.text,
+            )
+            if oauth_error == "invalid_grant":
+                raise RuntimeError(
+                    "OAuth `invalid_grant` na troca do code: o code expirou, ja foi usado ou foi "
+                    "emitido com outro `redirect_uri`. Gere um code novo e use-o em ate ~5 min."
+                )
         response.raise_for_status()
         payload = response.json()
         bundle = OAuthTokenBundle(
