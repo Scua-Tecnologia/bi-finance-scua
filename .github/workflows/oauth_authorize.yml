@@ -13,7 +13,7 @@ on:
     inputs:
       code:
         description: 'Valor do parâmetro "code" da URL de redirecionamento'
-        required: true
+        required: false
         type: string
 
 permissions:
@@ -44,10 +44,27 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
+      # Sem expor valores: hashes e formato para comparar com o link de login.
+      # O code só é aceito se client_id e redirect_uri forem idênticos aos do link.
+      - name: Diagnóstico das credenciais
+        run: |
+          python - <<'EOF'
+          import hashlib, os
+          for name in ("CONTA_AZUL_CLIENT_ID", "CONTA_AZUL_REDIRECT_URI"):
+              v = os.environ.get(name, "")
+              print(f"{name}: sha256[:12]={hashlib.sha256(v.encode()).hexdigest()[:12]} "
+                    f"len={len(v)} espacos_nas_pontas={v != v.strip()} termina_com_barra={v.endswith('/')}")
+          r = os.environ.get("CONTA_AZUL_REDIRECT_URI", "")
+          print("redirect_uri e https://scua.com.br/ ?", r == "https://scua.com.br/")
+          print("redirect_uri e https://scua.com.br  ?", r == "https://scua.com.br")
+          EOF
+
       - name: Trocar code por tokens
+        if: inputs.code != ''
         env:
           OAUTH_CODE: ${{ inputs.code }}
         run: python -m contaazul_bi.main authorize --code "$OAUTH_CODE"
 
       - name: Validar refresh
+        if: inputs.code != ''
         run: python -m contaazul_bi.main oauth-status --force-refresh
