@@ -1,0 +1,53 @@
+name: OAuth — Autorizar Conta Azul
+
+# Troca o authorization code do Conta Azul por tokens e grava em bi_oauth_tokens
+# (Supabase), usando as credenciais dos GitHub Secrets. Útil quando o
+# client_id/secret não estão disponíveis localmente.
+#
+# Uso: gere o code (login no Conta Azul → redirect para
+# https://scua.com.br/?code=...&state=...), copie SÓ o valor de "code" e rode
+# este workflow em até ~5 min — o code expira rápido e é de uso único.
+
+on:
+  workflow_dispatch:
+    inputs:
+      code:
+        description: 'Valor do parâmetro "code" da URL de redirecionamento'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  authorize:
+    name: Autorizar e validar OAuth
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CONTA_AZUL_CLIENT_ID:      ${{ secrets.CONTA_AZUL_CLIENT_ID }}
+      CONTA_AZUL_CLIENT_SECRET:  ${{ secrets.CONTA_AZUL_CLIENT_SECRET }}
+      CONTA_AZUL_REDIRECT_URI:   ${{ secrets.CONTA_AZUL_REDIRECT_URI }}
+      DATABASE_URL:              ${{ secrets.DATABASE_URL }}
+      CONTA_AZUL_LOG_LEVEL:      'INFO'
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4.2.2
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5.4.0
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Trocar code por tokens
+        env:
+          OAUTH_CODE: ${{ inputs.code }}
+        run: python -m contaazul_bi.main authorize --code "$OAUTH_CODE"
+
+      - name: Validar refresh
+        run: python -m contaazul_bi.main oauth-status --force-refresh
